@@ -1,0 +1,50 @@
+## USB port
+port: /dev/ttyRazorIMU
+
+
+##### Calibration ####
+### accelerometer
+accel_x_min: -250.0
+accel_x_max: 250.0
+accel_y_min: -250.0
+accel_y_max: 250.0
+accel_z_min: -250.0
+accel_z_max: 250.0
+
+### magnetometer
+# standard calibration
+#magn_x_min: 406.6
+#magn_x_max: 726.18
+#magn_y_min: -790.70
+#magn_y_max: -510.13
+#magn_z_min: -58.51
+#magn_z_max: 48.01
+
+#magn_x_min: 442.61
+#magn_x_max: 735.18
+#magn_y_min: -801.20
+#magn_y_max: -493.62
+#magn_z_min: -67.52
+#magn_z_max: 43.51
+
+magn_x_min: 406.60
+magn_x_max: 1096.77
+magn_y_min: -1309.83
+magn_y_max: -562.64
+magn_z_min: -541.64
+magn_z_max: -174.04
+
+
+
+# extended calibration
+calibration_magn_use_extended: false
+magn_ellipsoid_center: [0, 0, 0]
+magn_ellipsoid_transform: [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+
+# AHRS to robot calibration
+imu_yaw_calibration: 0.0
+
+### gyroscope
+gyro_average_offset_x: 0.0
+gyro_average_offset_y: -0.04
+gyro_average_offset_z: 0.01

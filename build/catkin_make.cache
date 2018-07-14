@@ -1,0 +1,2 @@
+marvelmind_nav:race:razor_imu_9dof:robot_localization:viso2/libviso2:viso2/viso2:viso2/viso2_ros:yocs_cmd_vel_mux
+-DCATKIN_DEVEL_PREFIX=/home/antonio/catkin_ws/devel -DCMAKE_INSTALL_PREFIX=/home/antonio/catkin_ws/install -G Unix Makefiles

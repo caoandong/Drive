@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<launch>
+		
+        
+        <node name="joy_node" pkg="joy" type="joy_node" output="screen">
+			<param name="dev" type="str" value="/dev/input/js0"  />
+		</node>
+		<node pkg="race" type="xbox_control.py" name="xbox_control" output="screen">
+			<!-- <remap from="xbox_control" to="/yocs_cmd_vel_mux/input/xbox" /> -->
+		</node>
+		<node pkg="race" type="camera_feeder.py" name="camera" output="screen"/>
+		<node pkg="race" type="lane_detector.py" name="lane_detector" output="screen"/>
+		<node pkg="race" type="driver.py" name="driver" output="screen">
+			<!-- <remap from="driver_control" to="/yocs_cmd_vel_mux/input/selfdrive"/> -->
+		</node>
+		<include file="$(find yocs_cmd_vel_mux)/launch/standalone.launch"/>
+		<node name="talker" pkg="race" type="talker.py" output="screen">
+        	<!-- <remap from="/drive_param" to="/yocs_cmd_vel_mux/output/drive_param" /> -->
+        </node>
+        <!-- don't add imu_node here.. because it won't read my_razor.yaml -->
+     
+        <node name="serial_node" pkg="rosserial_python" type="serial_node.py"  output="screen">
+                <param name="port" type="str" value="/dev/serial/by-id/usb-Teensyduino_USB_Serial_3098550-if00" />
+                <!-- <param name="port" type="str" value="/dev/ttyTeensy" /> -->
+		<!-- see this https://unix.stackexchange.com/questions/66901/how-to-bind-usb-device-under-a-static-name -->
+        </node>
+        <!-- Launch the IMU -->
+        <!-- <include file="$(find race)/launch/IMU/razor-pub.launch"/>
+        <node pkg="race" type="imu_tf.py" name="imu_tf" output="screen"/> -->
+</launch>

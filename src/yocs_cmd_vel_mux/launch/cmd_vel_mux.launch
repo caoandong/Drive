@@ -1,0 +1,19 @@
+<!--
+  YOCS Velocity Multiplexer launcher
+  -->
+
+<launch>
+  <arg name="nodelet_manager_name"  default="nodelet_manager"/>
+  <arg name="config_file"           default="$(find yocs_cmd_vel_mux)/param/drive.yaml"/>
+
+  <node pkg="nodelet" type="nodelet" name="yocs_cmd_vel_mux"
+        args="load yocs_cmd_vel_mux/CmdVelMuxNodelet $(arg nodelet_manager_name)">
+    <!--<remap from="/xbox_control" to="/yocs_cmd_vel_mux/input/xbox_control"/>-->
+    <!--<remap from="/driver_control" to="/yocs_cmd_vel_mux/input/selfdrive"/>-->
+    <remap from="/yocs_cmd_vel_mux/input/xbox" to="/xbox_control"/>
+    <remap from="/yocs_cmd_vel_mux/input/rand_walk" to="/lane_driver"/>
+    <remap from="/yocs_cmd_vel_mux/input/selfdrive" to="/driver_control"/>
+    <remap from="/yocs_cmd_vel_mux/output/drive_param" to="/drive_param_fin" />
+    <param name="yaml_cfg_file" value="$(arg config_file)"/>
+  </node>
+</launch>
