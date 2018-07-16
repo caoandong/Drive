@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <launch>
-        <node name="hedge_node" pkg="marvelmind_nav" type="hedge_rcv_bin" output="screen" args="/dev/ttyACM0">
+        <node name="hedge_node" pkg="marvelmind_nav" type="hedge_rcv_bin" output="screen" args="/dev/ttyACM2">
 			<!-- <param name="ttyFileName" type="str" value="/dev/ttyACM2" /> -->
 		</node>
 		<node pkg="race" type="hedge.py" name="hedge_tf" output="screen"/>e
