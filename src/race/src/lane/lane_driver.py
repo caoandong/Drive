@@ -8,6 +8,7 @@ from race.msg import drive_angle
 from race.msg import drive_speed
 from std_msgs.msg import String
 from std_msgs.msg import Bool
+from std_msgs.msg import Int32
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Joy
 
@@ -33,8 +34,17 @@ import matplotlib.animation as anim
 
 drive_pub = rospy.Publisher('lane_driver', drive_param, queue_size=1)
 
-max_speed = 18
-min_speed = 15.5
+# A list of things I wish to visualize:
+# the car, the orientation, the predicted movement, the FOV, the map
+
+visual_pub_car = rospy.Publisher('lane_driver/car', String, queue_size=1)
+visual_pub_FOV = rospy.Publisher('lane_driver/FOV', String, queue_size=1)
+visual_pub_pred = rospy.Publisher('lane_driver/pred_car', String, queue_size=1)
+
+#[car_pos, car_ang, orient_x, orient_y, show_FOV, show_pred_car, pred_pos, pred_ang, p0, p1]
+
+max_speed = 20
+min_speed = 17
 max_angle = 0.431139 # in radian
 
 forward = [max_speed, 0]
@@ -63,6 +73,192 @@ car = Polygon([(-car_length/2, car_width/2),(car_length/2, car_width/2),
 driver = drive_param()
 driver.velocity = 0
 driver.angle = 0
+
+line_slope = [12345.6789,12345.6789,12345.6789]
+show_FOV = 0
+show_pred_car = 0
+
+def undistort_slope(slope):
+    print 'input slope: ', slope
+    M = np.array([[-0.24825365335095023, -1.3835463057733923, 360.9934788630403],
+                  [-0.09005486236297656, -3.1198655572818654, 712.6915509275204], 
+                  [-0.00013159536138092456, -0.0047202178254111115, 1.0]])
+    
+    p1 = slope[0]
+    p1.append(1)
+    p1 = np.array(p1).reshape([-1,1])
+    print 'p1 vector: ', p1
+    p1 = np.matmul(M, p1).reshape([-1]).tolist()
+    p1 = [p1[0]/p1[2], -1*p1[1]/p1[2]]
+
+    p2 = slope[1]
+    p2.append(1)
+    p2 = np.array(p2).reshape([-1,1])
+    p2 = np.matmul(M, p2).reshape([-1]).tolist()
+    p2 = [p2[0]/p2[2], -1*p2[1]/p2[2]]
+
+    slope_vec = p1 - p0
+    print 'slope_vec inverted: ', slope_vec
+    slope_new = slope_vec[1]/slope_vec[0]
+    print 'slope_new: ', slope_new
+    return slope_new
+
+def find_orient():
+    global car_pos
+    global car_ang
+    global line_map
+    # global line_slope
+    global orient
+    global show_FOV
+
+    # M = np.array([[-0.24825365335095023, -1.3835463057733923, 360.9934788630403],
+    #               [-0.09005486236297656, -3.1198655572818654, 712.6915509275204], 
+    #               [-0.00013159536138092456, -0.0047202178254111115, 1.0]])
+
+    # # Find the slope of all the lines on the image
+    # # Transform the slopes to the map coordinate (? do I have to ?)
+    # list_slope = []
+    # for slope in line_slope:
+    #     slope_vec = np.array([[1], [slope],[1]])
+    #     slope_vec = np.matmul(M, slope_vec).tolist()
+    #     # Invert the y-coord because the y_axis is pointing downward in an image
+    #     slope_vec = [slope_vec[0]/float(slope_vec[2]), -1*slope_vec[1]/float(slope_vec[2])]
+    #     slope_new = slope_vec[1]/slope_vec[0]
+    #     list_slope.append(slope_new)
+
+    # Based on the location of the car, find the nearest edges in the FOV
+    orient_list = []
+    orient_list_tmp = []
+
+    print 'initialize FOV'
+    FOV = Polygon([(0,0),(0.75,0.59),(0.75,-0.59)])
+    FOV = affinity.rotate(FOV, car_ang, origin=(0,0), use_radians=True)
+    FOV = affinity.translate(FOV, xoff=car_pos[0], yoff=car_pos[1])
+    print FOV
+
+    show_FOV = 1
+    visual_pub_FOV.publish("[%d, %f, %f, %f]" % (show_FOV, car_pos[0], car_pos[1], float(car_ang)))
+
+    for line in line_map:
+        if FOV.intersects(line):
+            print 'FOV intersects: ', line
+            orient_list_tmp.append(line)
+
+    ang_min = 10
+    diff_min = 10
+    num_orient_tmp = len(orient_list_tmp)
+    orient_ret = orient
+
+    print 'guessed orient: ', orient
+
+    if num_orient_tmp > 1:
+        print 'loop through all nearby lines'
+        for line in orient_list_tmp:
+            x0, x1 = line.xy[0]
+            y0, y1 = line.xy[1]
+            slope_vec_tmp = np.array([x1-x0,y1-y0])
+            # orient_tmp = np.array([np.cos(car_ang), np.sin(car_ang)])
+            
+            ang_cos_tmp = np.dot(slope_vec_tmp, orient)/(np.linalg.norm(slope_vec_tmp)*np.linalg.norm(orient))
+            ang_tmp = np.arccos(ang_cos_tmp)
+            if ang_tmp > np.pi/2:
+                ang_tmp = ang_tmp - np.pi/2
+            print 'angle between this line and guessed orientation: ', np.degrees(ang_tmp)
+            if abs(ang_tmp) < diff_min:
+                diff_min = abs(ang_tmp)
+                print 'found a smaller angle difference: ', ang_tmp, ' the difference is: ', diff_min
+                ang_min = ang_tmp
+                if ang_cos_tmp < 0:
+                    print 'slope_vec is opposite: ', slope_vec_tmp
+                    slope_vec_tmp = -1*slope_vec_tmp
+                orient_ret = slope_vec_tmp
+    elif num_orient_tmp == 1:
+        orient_ret = orient_list_tmp[0]
+
+    # ang_offset is the angle between the
+    # nearest edges and the car's orientation
+    # ang_offset = 0
+
+    
+    # if (line_slope[0] != 12345.6789) or (line_slope[1] != 12345.6789) or (line_slope[2] != 12345.6789):
+    #     # Find the angle between the y-axis and the verticle lines
+
+    #     # Case 1: at least one verticle line:
+    #     if line_slope[0] != 12345.6789:
+    #         print 'there exists a left line'
+    #         ang_offset_0 = undistort_slope(line_slope[0])
+    #         print 'slope of the left_line: ', ang_offset_0
+    #         ang_offset_0 = np.arctan2(1, ang_offset_0)
+    #         ang_offset = ang_offset_0
+    #         print 'angle between left line and the y-axis: ', np.degrees(ang_offset)
+
+    #     if line_slope[2] != 12345.6789:
+    #         print 'there exists a right line'
+    #         ang_offset_2 = undistort_slope(line_slope[2])
+    #         ang_offset_2 = np.arctan2(1, ang_offset_2)
+    #         ang_offset = ang_offset_2
+    #         print 'ang_offset: ', ang_offset
+
+    #     if line_slope[0] != 12345.6789 and line_slope[2] != 12345.6789:
+    #         print 'both left and right lines exist (parallel lines)'
+    #         # take the average
+    #         ang_offset = (ang_offset_0 + ang_offset_0)/2
+    #         print 'ang_offset: ', ang_offset
+
+    #     # Case 2: one horizontal line
+    #     elif line_slope[1] != 12345.6789:
+    #         print 'Only one horizontal line'
+    #         ang_offset = undistort_slope(line_slope[1])
+    #         ang_offset = np.arctan2(1, ang_offset)
+    #         print 'ang_offset: ', ang_offset
+
+    #     if num_orient_tmp > 1:
+    #         print 'loop through all nearby lines'
+    #         for line in orient_list_tmp:
+    #             x0, x1 = line.xy[0]
+    #             y0, y1 = line.xy[1]
+    #             slope_vec_tmp = np.array([x1-x0,y1-y0])
+    #             # orient_tmp = np.array([np.cos(car_ang), np.sin(car_ang)])
+                
+    #             ang_cos_tmp = np.dot(slope_vec_tmp, orient)/(np.linalg.norm(slope_vec_tmp)*np.linalg.norm(orient))
+    #             ang_tmp = np.arccos(ang_cos_tmp)
+    #             print 'angle between this line and guessed orientation: ', ang_tmp
+    #             if abs(ang_tmp - ang_offset) < diff_min:
+    #                 print 'found a smaller angle difference: ', ang_tmp, ' the difference is: ', diff_min
+    #                 diff_min = abs(ang_tmp - ang_offset)
+    #                 ang_min = ang_tmp
+    #                 if ang_cos_tmp < 0:
+    #                     print 'slope_vec is opposite: ', slope_vec_tmp
+    #                     slope_vec_tmp = -1*slope_vec_tmp
+    #                 orient_ret = slope_vec_tmp
+    #     elif num_orient_tmp == 1:
+    #         orient_ret = orient_list_tmp[0]
+
+    #     orient_ret = [orient_ret[0]*np.cos(ang_offset)-orient_ret[1]*np.sin(ang_offset), 
+    #                   orient_ret[0]*np.sin(ang_offset)+orient_ret[1]*np.cos(ang_offset)]
+    #     orient_ret = np.array(orient_ret)
+        
+        orient_ret = orient_ret/np.linalg.norm(orient_ret)
+        print 'orient_ret: ', orient_ret
+
+    # Reset car
+    car_ang = np.arctan2(orient_ret[1], orient_ret[0])
+
+    car = Polygon([(-car_length/2, car_width/2),(car_length/2, car_width/2),
+                   (car_length/2, -car_width/2),(-car_length/2, -car_width/2)])
+    # print 'polygon car: ', car
+    car = affinity.rotate(car, car_ang, use_radians=True)
+    # print 'rotate car: ', car
+    car = affinity.translate(car, xoff=car_pos[0], yoff=car_pos[1])
+
+    return orient_ret
+
+line_slope = []
+
+def callback_orient(data):
+    global line_slope
+    line_slope = eval(data.data)
+
 
 def build_map(map_path):
     map = open(map_path, 'r')
@@ -142,7 +338,7 @@ def init_car_2():
     car = Polygon([(-car_length/2, car_width/2),(car_length/2, car_width/2),
                    (car_length/2, -car_width/2),(-car_length/2, -car_width/2)])
     # print 'polygon car: ', car
-    car = affinity.rotate(car, angle)
+    car = affinity.rotate(car, angle, use_radians=True)
     # print 'rotate car: ', car
     car = affinity.translate(car, xoff=center[0], yoff=center[1])
     # print 'translate car: ', car
@@ -174,26 +370,30 @@ def predict_car(speed, ang, dt):
     p = np.array([x,y])
     print 'car pos: ', p
     p = p.reshape([2,1])
+    speed = abs(speed)
 
     print 'ang: ', ang
+    
+    if abs(ang) > 0.001:
 
-    r = car_length/2*np.tan(ang)
-    print 'dist to O: ', r
+        r = car_length/(2*np.tan(ang))
+        r = abs(r)
+        print 'dist to O: ', r
 
-    O_x = x+r*np.sin(car_ang)
-    O_y = y-r*np.cos(car_ang)
-    O = [O_x, O_y]
-    print 'O: ', O
+        O_x = x+r*np.sin(car_ang)
+        O_y = y-r*np.cos(car_ang)
+        O = [O_x, O_y]
+        print 'O: ', O
 
-    O = np.array(O)
-    O = O.reshape([2,1])
+        O = np.array(O)
+        O = O.reshape([2,1])
 
-    p = p - O
+        p = p - O
 
-    print 'speed: ', speed
-    print 'dt: ', dt
+        print 'speed: ', speed
+        print 'dt: ', dt
 
-    if r != 0:
+    
         phi = -speed*dt/r
         print 'rotation: ', phi
 
@@ -212,25 +412,33 @@ def predict_car(speed, ang, dt):
 
         d_ang = car_ang_f - car_ang
         print 'change of angle: ', d_ang
+
+        x_off = p[0]-x
+        y_off = p[1]-y
     else:
         car_ang_f = car_ang
         d_ang = 0
 
-    x_off = p[0]-x
-    y_off = p[1]-y
+        x_off = speed*dt*np.cos(car_ang)
+        y_off = speed*dt*np.sin(car_ang)
+    
     print 'offset: ', x_off, y_off
     print 'offset amount: ', np.sqrt(x_off**2 + y_off**2)
 
     print 'dist_travel: ', speed*dt
-    print '-----------------START PREDICTING-----------------------'
+    print '-----------------END PREDICTING-----------------------'
 
     return d_ang, x_off, y_off, p, car_ang_f
     
 
-def col_free(pos, orient, param, line_map):
+def col_free(param):
     global car
     global car_pos
     global car_ang
+    global pos
+    global orient
+    global line_map
+    global show_pred_car
 
     print '----------------start checking collision----------------'
 
@@ -243,6 +451,7 @@ def col_free(pos, orient, param, line_map):
     x = pos[0]
     y = pos[1]
     speed = param[0]
+    show_pred_car = 1
 
     for t in range(5):
         dt = 1/5.0
@@ -256,10 +465,14 @@ def col_free(pos, orient, param, line_map):
         car = affinity.rotate(car, d_ang, origin='centroid', use_radians=True)
         car = affinity.translate(car, xoff=x_off, yoff=y_off)
 
+        visual_pub_pred.publish('[%d,%f,%f,%f]' % (show_pred_car, d_ang, x_off, y_off))
+
         car_pos = np.array([p[0], p[1]])
         car_ang = car_ang_f
 
         # plot_poly(car)
+        show_pred_car = 0
+        visual_pub_pred.publish('[%d,%f,%f,%f]' % (show_pred_car, d_ang, x_off, y_off))
 
         for line in line_map:
             if car.intersects(line):
@@ -274,23 +487,28 @@ def col_free(pos, orient, param, line_map):
     print '----------------end checking collision----------------'
     return 1
 
-def update_car(orient):
+def update_car():
     global car
     global car_pos
     global car_ang
     global pos
+    global orient
 
     # print '------------update car----------------'
 
     orient = orient/float(np.linalg.norm(orient))
     center = np.array(pos) + offset*orient
-    x_off = center[0] - car_pos[0]
-    y_off = center[1] - car_pos[1]
+    print 'center: ', center
+    print 'car_pos: ', car_pos
+    x_off = np.asscalar(center[0] - car_pos[0])
+    y_off = np.asscalar(center[1] - car_pos[1])
+    print 'offset: ', x_off, y_off
     car_pos = center
 
     # print 'new car_pos: ', car_pos
+    orient_tmp = orient.reshape([-1]).tolist()
 
-    new_ang = np.arctan2(float(orient[1]), float(orient[0]))
+    new_ang = np.arctan2(float(orient_tmp[1]), float(orient_tmp[0]))
     d_ang = new_ang - car_ang
     car_ang = new_ang
 
@@ -309,17 +527,15 @@ def random_walk():
     global drive_param_list
     global orient
     global line_map
-
-    # update the car first
-    update_car(orient)
     
     driver.velocity = 0
     driver.angle = 0
 
     for param in drive_param_list:
-        if col_free(pos, orient, param, line_map) == 1:
+        if col_free(param) == 1:
             driver.velocity = param[0]
             driver.angle = param[1]
+            return
 
 
 def average_pos(pos):
@@ -343,13 +559,15 @@ def callback(odom):
     global pos
     global START_WALKING
 
+    # position of the beacon
+    # NOT the center of the car
+
+    pos = [odom.pose.pose.position.x,odom.pose.pose.position.y]
+
     if START == 1:
-        # position of the beacon
-        # NOT the center of the car
-        pos = [odom.pose.pose.position.x,odom.pose.pose.position.y]
 
         if init == 1:
-            if prev_pos[0] == 1j or prev_pos[1] == 1j :
+            if prev_pos[0] == 12345.6789 or prev_pos[1] == 12345.6789 :
                 prev_pos = np.array([pos[0],pos[1]])
                 print '////////////////record position: ', prev_pos
                 print 'INIT CAR 1'
@@ -361,18 +579,19 @@ def callback(odom):
         #     init_car_2()
             
         else:
-            # print 'Start driving'
-            # print 'current position: ', pos
+            print 'Start driving'
+            print 'current position: ', pos
             q1 = odom.pose.pose.orientation.x
             q2 = odom.pose.pose.orientation.y
             q3 = odom.pose.pose.orientation.z
             q0 = odom.pose.pose.orientation.w
             q_ang = np.arctan2(2*(q0*q3+q1*q2),1-2*(q2**2+q3**2))
 
-            orient = [orient[0]*np.cos(q_ang)-orient[1]*np.sin(q_ang), 
+            orient_new = [orient[0]*np.cos(q_ang)-orient[1]*np.sin(q_ang), 
                       orient[0]*np.sin(q_ang)+orient[1]*np.cos(q_ang)]
-            orient = np.array(orient)
-            # print 'current orientation: ', orient
+            orient_new = np.array(orient_new) - np.array(orient)
+            orient += 0.3*orient_new
+            print 'current orientation: ', orient
 
             START_WALKING = 1
 
@@ -473,23 +692,25 @@ def joy_callback(data):
         if toggle == 1:
             START = 1
             init = 1
-            prev_pos = np.array([1j,1j])
+            prev_pos = np.array([12345.6789,12345.6789])
             print 'turn on'
             prev_time = now_time = rospy.get_time()
         elif toggle == 0:
             START = 0
             START_WALKING = 0
             init = 1
-            prev_pos = np.array([1j,1j])
+            prev_pos = np.array([12345.6789,12345.6789])
             print 'turn off'
 
-def update_anim(num):
-    global car
-    global poly
+# def update_anim(num):
+#     global ax
+#     global car
+#     global poly
 
-    x,y = car.exterior.xy
-    poly.set_data(x,y)
-    return poly,
+#     x,y = car.exterior.xy
+#     print 'update anim: ', x, y
+#     poly.set_data(x,y)
+#     return poly,
 
 rospy.init_node('lane_driver', anonymous=True)
 
@@ -498,27 +719,18 @@ toggle = 0
 START_WALKING = 0
 
 map_path = '/home/antonio/catkin_ws/src/race/src/map/map.txt'
-p0 = np.array([0.510, 4.370])
-p1 = np.array([2.875, 2.622])
+p0 = np.array([2.29, 1.20])
+p1 = np.array([3.98, 3.75])
 line_map, line_map_plot = map_gen.map_gen(map_path, p0, p1)
 
 print 'map generated: ', line_map
 
 
-fig = plt.figure()
-# ax = fig.add_subplot(111)
-ax = plt.axes(xlim=(-3,5), ylim=(-1,8))
-# poly = ax.plot([], [], color='#6699cc', alpha=0.7,
-#     linewidth=3, solid_capstyle='round', zorder=2)
-poly, = ax.plot([],[],'r-')
-plot_line(line_map)
-# ax.set_xlim([-3,5])
-# ax.set_ylim([-1,8])
-
+# fig = plt.figure()
+# ax = plt.axes(xlim=(-3,5), ylim=(-1,8))
+# poly, = ax.plot([], [], color='#6699cc',
+#     linewidth=3, solid_capstyle='round')
 # plot_line(line_map)
-# ax.set_xlim([-2,4])
-# ax.set_ylim([3,9])
-# plt.pause(0.001)
 
 # Question: how to determine the orientation?
 orient = np.array([1,0])
@@ -527,17 +739,18 @@ car_ang = np.arctan(orient[1]/float(orient[0]))
 
 init = 1
 prev_time = now_time = rospy.get_time()
-prev_pos = np.array([1j,1j])
+prev_pos = np.array([12345.6789,12345.6789])
 pos = prev_pos
 
 if __name__ == '__main__':
 
     rospy.Subscriber("joy", Joy, joy_callback)
     rospy.Subscriber('odometry/filtered', Odometry, callback)
+    rospy.Subscriber('line_cnt/slope', String, callback_orient)
 
-    print 'START ANIMATION'
-    animation = anim.FuncAnimation(fig, update_anim, frames=25,
-                               interval=200, blit=True)
+    # print 'START ANIMATION'
+    # animation = anim.FuncAnimation(fig, update_anim, frames=25,
+    #                            blit=True)
     # plt.pause(0.0001)
     # if init == 1:
     #     init_car(car_pos)
@@ -547,20 +760,25 @@ if __name__ == '__main__':
     rate = rospy.Rate(num_cycles)
 
     while not rospy.is_shutdown():
-
-        print 'init: ', init, ' START: ', START, ' START_WALKING: ', START_WALKING
+        visual_pub_car.publish("[%s, %f]" % (str(car_pos.tolist()), car_ang))
+        # plt.pause(0.01)
+        # print 'init: ', init, ' START: ', START, ' START_WALKING: ', START_WALKING
         if START == 1:
+            # update the car first
+            update_car()
+            
             if init > 2:
                 print 'published driver: ', driver
                 drive_pub.publish(driver)
                 
                 # plt.draw()
-                plt.pause(0.01)
 
             if START_WALKING == 1:
                 if init == 2:
                     print 'INIT CAR 2'
                     init_car_2()
+                    orient = find_orient()
+
                     prev_time = rospy.get_time()-1
                 
 

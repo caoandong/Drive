@@ -30,6 +30,7 @@ angle = 0
 
 pub_param = rospy.Publisher('selfdrive', drive_param, queue_size=1)
 pub_cnt = rospy.Publisher('line_cnt', String, queue_size=1)
+slope_pub = rospy.Publisher('line_cnt/slope', String, queue_size=1)
 
 def image_callback(ros_image):
         global frame
@@ -202,6 +203,8 @@ def detect(org_image, wider_mask=False):
             left_polyfit = None
             right_polyfit = None
 
+            slope_left = slope_mid = slope_right = "0"
+
             if cnt_left > 0:
                 #do 1d fitting
                 left_polyfit = np.polyfit(left_line_y, left_line_x, deg=1)
@@ -210,9 +213,17 @@ def detect(org_image, wider_mask=False):
                 left_x_end = int(poly_left(min_y))
 
                 cv2.line(img, (left_x_start, max_y), (left_x_end, min_y), (0, 0, 255), 5)
+
+                if left_x_start < 0:
+                    # find the value of y at x=0:
+                    sol = poly_left.roots
+                    sol = np.asscalar(sol)
+                    slope_left = [[0, sol], [left_x_end, min_y]]
+                else:
+                    slope_left = [[left_x_start, max_y], [left_x_end, min_y]]
                 
-                # if DEBUG_MSG:
-                #     print 'left', left_polyfit[0], left_polyfit[1]
+                slope_left = str(slope_left)
+
             if cnt_mid > 0:
                 #do 1d fitting
                 mid_polyfit = np.polyfit(mid_line_y, mid_line_x, deg=1)
@@ -222,8 +233,13 @@ def detect(org_image, wider_mask=False):
 
                 cv2.line(img, (mid_x_start, max_y), (mid_x_end, min_y), (0, 0, 255), 5)
                 
-                # if DEBUG_MSG:
-                #     print 'mid', mid_polyfit[0], mid_polyfit[1]
+                sol_1 = (poly_mid - 100).roots
+                sol_1 = np.asscalar(sol_1)
+                sol_2 = (poly_mid - 430).roots
+                sol_2 = np.asscalar(sol_2)
+
+                slope_mid = [[100, sol_1], [430, sol_2]]
+                slope_mid = str(slope_mid)
 
             if cnt_right > 0:
                 #do 1d fitting                
@@ -234,10 +250,17 @@ def detect(org_image, wider_mask=False):
 
                 cv2.line(img, (right_x_start, max_y), (right_x_end, min_y), (0, 0, 255), 5)
 
-                # if DEBUG_MSG:
-                #     print 'right', right_polyfit[0], right_polyfit[1]
+                if right_x_start > 640:
+                    # find the value of y at x=640:
+                    sol = (poly_right - 640).roots
+                    sol = np.asscalar(sol)
+                    slope_right = [[right_x_end, min_y],[640, sol]]
+                else:
+                    slope_right = [[right_x_start, max_y],[right_x_end, min_y]]
+                slope_right = str(slope_right)
                 
             pub_cnt.publish("mid count: %d" % cnt_mid)
+            slope_pub.publish("[%s,%s,%s]" % (slope_left, slope_mid, slope_right))
 
             MID_X = img.shape[0]/2
             CTE = 0

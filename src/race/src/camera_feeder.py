@@ -41,7 +41,7 @@ def undistort(frame):
 
 pub_topic_name = "camera"
 camera1_pub = rospy.Publisher(pub_topic_name,Image,queue_size=1)
-camera_info_pub = rospy.Publisher("camera_info",CameraInfo,queue_size=1)
+# camera_info_pub = rospy.Publisher("camera_info",CameraInfo,queue_size=1)
 bridge = CvBridge()
 
 camera_index = 0
@@ -63,11 +63,13 @@ def unpesp(img):
 
     M = cv2.getPerspectiveTransform(pts1,pts2)
 
+    print 'M: ', M.tolist()
+
     dst = cv2.warpPerspective(img,M,(600,625))
 
-    #plt.subplot(121),plt.imshow(img),plt.title('Input')
-    #plt.subplot(122),plt.imshow(dst),plt.title('Output')
-    #plt.show()
+    # plt.subplot(121),plt.imshow(img),plt.title('Input')
+    # plt.subplot(122),plt.imshow(dst),plt.title('Output')
+    # plt.show()
 
     return dst
 
@@ -89,22 +91,22 @@ def camera_feeder():
                 frame = undistort(frame)
                 #cv2.imshow("undistort", frame)
                 #cv2.waitKey(0)
-                #frame = unpesp(frame)
+                # frame = unpesp(frame)
                 new_ros_image1 = bridge.cv2_to_imgmsg(frame, "bgr8")
                 camera1_pub.publish(new_ros_image1)
 
-                camera_info = CameraInfo()
-                camera_info.header.stamp = rospy.Time.from_sec(time.time())
-                camera_info.height = 640
-                camera_info.width = 480
-                camera_info.distortion_model = "plumb_bob"
-                camera_info.K = [244.74679589748206, 0.0, 324.10090465649074, 0.0, 245.8525640393831, 218.54424425387143, 0.0, 0.0, 1.0]
-                camera_info.D = [0.02273244776342948, -0.3833982766138981, 0.7321903621661955, -0.44154988517309635]
-                camera_info.R = [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0]
-                camera_info.P = [244.74679589748206, 0.0, 324.10090465649074, 0.0, 0.0, 245.8525640393831, 218.54424425387143, 0.0, 0.0, 0.0, 1.0, 0.0]
-                camera_info_pub.publish(camera_info)
-                #cv2.imshow("undistort+unpesp", frame)
-                #cv2.waitKey(0)
+                # camera_info = CameraInfo()
+                # camera_info.header.stamp = rospy.Time.from_sec(time.time())
+                # camera_info.height = 640
+                # camera_info.width = 480
+                # camera_info.distortion_model = "plumb_bob"
+                # camera_info.K = [244.74679589748206, 0.0, 324.10090465649074, 0.0, 245.8525640393831, 218.54424425387143, 0.0, 0.0, 1.0]
+                # camera_info.D = [0.02273244776342948, -0.3833982766138981, 0.7321903621661955, -0.44154988517309635]
+                # camera_info.R = [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0]
+                # camera_info.P = [244.74679589748206, 0.0, 324.10090465649074, 0.0, 0.0, 245.8525640393831, 218.54424425387143, 0.0, 0.0, 0.0, 1.0, 0.0]
+                # camera_info_pub.publish(camera_info)
+                # cv2.imshow("undistort+unpesp", frame)
+                # cv2.waitKey(0)
 
                 '''
                 frame = adjust_gamma(frame, 2.0)

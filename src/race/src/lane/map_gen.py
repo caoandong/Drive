@@ -20,32 +20,41 @@ def map_gen(map_path, p0, p1):
         counter += 1
     vec1 = p1 - p0
     vec2 = np.array(map_pts[1]) - np.array(map_pts[0])
-    #print 'v1: ', vec1
-    #print 'v2: ', vec2
+    # print 'v1: ', vec1
+    # print 'v2: ', vec2
     
     l1 = np.linalg.norm(vec1)
     l2 = np.linalg.norm(vec2)
     dot = np.dot(vec1, vec2)
 
-    #print 'val: ', dot/(l1*l2)
+    # print 'dot: ', dot/(l1*l2)
     ang = np.arccos(dot/(l1*l2))
 
-    #print 'angle: ', ang
+    # print 'angle: ', ang
+
+    cross = np.cross(vec2, vec1)
+    # print 'cross: ', cross
+    if cross < 0:
+        ang = 2*np.pi - ang
+    elif cross > 0:
+        ang = ang
+    else:
+        assert abs(ang) <= 0.0001
 
     map_pts = np.transpose(np.array(map_pts))
     #print 'pts matrix: ', map_pts
 
     # Scaling:
     scale = float(l1)/l2
-    #print 'scale: ', scale
+    # print 'scale: ', scale
     S = [[scale,0],[0,scale]]
     mat_pts = np.matmul(S, map_pts)
-    #print 'Scaling: ', mat_pts
+    # print 'Scaling: ', mat_pts
 
     # Rotation:
     R = np.array([[np.cos(ang), -np.sin(ang)],[np.sin(ang), np.cos(ang)]])
     map_pts = np.matmul(R, map_pts)
-    #print 'Rotation: ', map_pts
+    # print 'Rotation: ', map_pts
 
     # Translation:
     for i in range(map_pts.shape[1]):
@@ -53,7 +62,7 @@ def map_gen(map_path, p0, p1):
         map_pts[1][i] = map_pts[1][i] + p0[1]
 
     map_pts = np.transpose(map_pts).tolist()
-    #print 'Translation: ', map_pts
+    # print 'Translation: ', map_pts
 
     lines = []
     line_pts = []
