@@ -47,22 +47,22 @@ def callback_imu_2(imu):
 	imu_new = imu
 	imu_new.header.stamp = rospy.get_rostime()
 	imu_new.header.frame_id = "base_link"
-	imu_new.orientation.x = -1.0*imu.orientation.y
-	imu_new.orientation.y = -1.0*imu.orientation.x
-	imu_new.orientation.z = imu.orientation.z
-	x = -1.0*imu.linear_acceleration.y
-	y = -1.0*imu.linear_acceleration.x
-	z = imu.linear_acceleration.z
+	imu_new.orientation.x = -1.0*imu.orientation.x
+	imu_new.orientation.y = -1.0*imu.orientation.y
+	imu_new.orientation.z = -1.0*imu.orientation.z
+	x = -1.0*imu.linear_acceleration.x
+	y = -1.0*imu.linear_acceleration.y
+	z = -1.0*imu.linear_acceleration.z
 	x,y,z = scale_linear_accel(x,y,z)
 	imu_new.linear_acceleration.x = x
 	imu_new.linear_acceleration.y = y
 	imu_new.linear_acceleration.z = z
-	imu_new.angular_velocity.x = -1.0*imu.angular_velocity.y
-	imu_new.angular_velocity.y = -1.0*imu.angular_velocity.x
-	imu_new.angular_velocity.z = imu.angular_velocity.z
+	imu_new.angular_velocity.x = -1.0*imu.angular_velocity.x
+	imu_new.angular_velocity.y = -1.0*imu.angular_velocity.y
+	imu_new.angular_velocity.z = -1.0*imu.angular_velocity.z
 
 if __name__ == '__main__':
-    rospy.Subscriber(imu_topic, Imu, callback_imu)
+    rospy.Subscriber(imu_topic, Imu, callback_imu_2)
 
     rate = rospy.Rate(20)
     while not rospy.is_shutdown():

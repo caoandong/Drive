@@ -117,7 +117,7 @@ def map_angle(angle):
 def callback_param(data):
         global param_angle
         global param_speed
-        print("+++++++++++++++++++++++++talker live++++++++++++++++++++++++++++++")
+        # print("+++++++++++++++++++++++++talker live++++++++++++++++++++++++++++++")
         param_speed = data.velocity
         param_angle = data.angle
 

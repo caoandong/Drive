@@ -146,10 +146,23 @@ def detect(org_image, wider_mask=False):
             right_line_y = []
             mid_line_x = []
             mid_line_y = []
+            mid_line_left_x = []
+            mid_line_left_y = []
+            mid_line_right_x = []
+            mid_line_right_y = []
 
             cnt_left = 0
             cnt_right = 0
             cnt_mid = 0
+            cnt_mid_left = 0
+            cnt_mid_right = 0
+
+            mid_x = 640/2
+            left_mid_x = int(640/3)
+            right_mid_x = 2*left_mid_x
+
+            min_x_val = 640
+            max_x_val = 0
 
             for line in lines:
                 for x1, y1, x2, y2 in line:
@@ -178,19 +191,35 @@ def detect(org_image, wider_mask=False):
 
 
                     if slope <= -0.3:
-                        pub_cnt.publish("left slope: %f" % slope)
+                        # pub_cnt.publish("left slope: %f" % slope)
                         left_line_x.extend([x1, x2])
                         left_line_y.extend([y1, y2])
                         cnt_left += 1
                     elif slope >= 0.3: 
-                        pub_cnt.publish("right slope: %f" % slope)
+                        # pub_cnt.publish("right slope: %f" % slope)
                         right_line_x.extend([x1, x2])
                         right_line_y.extend([y1, y2])
                         cnt_right += 1
                     else:
+                        min_x_tmp = min(x1, x2)
+                        max_x_tmp = max(x1, x2)
+                        if min_x_tmp < min_x_val:
+                            min_x_val = min_x_tmp
+                        if max_x_tmp > max_x_val:
+                            max_x_val = max_x_tmp
                         mid_line_x.extend([x1, x2])
                         mid_line_y.extend([y1, y2])
                         cnt_mid += 1
+
+                        if max(x1,x2) < left_mid_x:
+                            mid_line_left_x.extend([x1, x2])
+                            mid_line_left_y.extend([y1, y2])
+                            cnt_mid_left += 1
+                        elif min(x1,x2) > right_mid_x:
+                            mid_line_right_x.extend([x1, x2])
+                            mid_line_right_y.extend([y1, y2])
+                            cnt_mid_right += 1
+                        
 
             color_edges = np.dstack((img, img, img))                            
             combo = cv2.addWeighted(org_image, 0.8, line_image, 1, 0)
@@ -203,7 +232,7 @@ def detect(org_image, wider_mask=False):
             left_polyfit = None
             right_polyfit = None
 
-            slope_left = slope_mid = slope_right = "0"
+            slope_left = slope_mid_left = slope_mid = slope_mid_right = slope_right = "0"
 
             if cnt_left > 0:
                 #do 1d fitting
@@ -228,18 +257,65 @@ def detect(org_image, wider_mask=False):
                 #do 1d fitting
                 mid_polyfit = np.polyfit(mid_line_y, mid_line_x, deg=1)
                 poly_mid = np.poly1d(mid_polyfit)
-                mid_x_start = int(poly_mid(max_y))
-                mid_x_end = int(poly_mid(min_y))
 
-                cv2.line(img, (mid_x_start, max_y), (mid_x_end, min_y), (0, 0, 255), 5)
-                
-                sol_1 = (poly_mid - 100).roots
+                sol_1 = (poly_mid - min_x_val).roots
                 sol_1 = np.asscalar(sol_1)
-                sol_2 = (poly_mid - 430).roots
+                sol_2 = (poly_mid - max_x_val).roots
                 sol_2 = np.asscalar(sol_2)
 
-                slope_mid = [[100, sol_1], [430, sol_2]]
+                slope_mid = [[min_x_val, sol_1], [max_x_val, sol_2]]
                 slope_mid = str(slope_mid)
+                
+                try:
+                    cv2.line(img, (min_x_val, int(sol_1)), (max_x_val, int(sol_2)), (0, 0, 255), 5)
+                except:
+                    pass
+
+            if cnt_mid_left > 0:
+                #do 1d fitting
+                mid_left_polyfit = np.polyfit(mid_line_left_y, mid_line_left_x, deg=1)
+                poly_left_mid = np.poly1d(mid_left_polyfit)
+                mid_left_x_start = int(poly_left_mid(max_y))
+                mid_left_x_end = int(poly_left_mid(min_y))
+
+                sol_1 = poly_left_mid.roots
+                sol_1 = np.asscalar(sol_1)
+                sol_2 = (poly_left_mid - left_mid_x).roots
+                sol_2 = np.asscalar(sol_2)
+
+                slope_mid_left = [[0, sol_1], [left_mid_x, sol_2]]
+                slope_mid_left = str(slope_mid_left)
+
+                try:
+                    if int(sol_1) > max_y:
+                        cv2.line(img, (mid_left_x_end, min_y), (left_mid_x, int(sol_2)), (123, 0, 232), 5)
+                    else:
+                        cv2.line(img, (0, int(sol_1)), (left_mid_x, int(sol_2)), (123, 0, 232), 5)
+                except:
+                    pass
+
+            if cnt_mid_right > 0:
+                #do 1d fitting
+                mid_right_polyfit = np.polyfit(mid_line_right_y, mid_line_right_x, deg=1)
+                poly_right_mid = np.poly1d(mid_right_polyfit)
+                mid_right_x_start = int(poly_right_mid(max_y))
+                mid_right_x_end = int(poly_right_mid(min_y))
+
+                sol_1 = (poly_right_mid - right_mid_x).roots
+                sol_1 = np.asscalar(sol_1)
+                sol_2 = (poly_right_mid - 640).roots
+                sol_2 = np.asscalar(sol_2)
+
+                slope_mid_right = [[right_mid_x, sol_1], [640, sol_2]]
+                slope_mid_right = str(slope_mid_right)
+
+                try:
+                    if int(sol_2) > max_y:
+                        cv2.line(img, (right_mid_x, int(sol_1)), (mid_right_x_start, max_y), (232, 0, 143), 5)
+                    else:
+                        cv2.line(img, (right_mid_x, int(sol_1)), (640, int(sol_2)), (232, 0, 143), 5)
+                except:
+                    pass
 
             if cnt_right > 0:
                 #do 1d fitting                
@@ -260,7 +336,7 @@ def detect(org_image, wider_mask=False):
                 slope_right = str(slope_right)
                 
             pub_cnt.publish("mid count: %d" % cnt_mid)
-            slope_pub.publish("[%s,%s,%s]" % (slope_left, slope_mid, slope_right))
+            slope_pub.publish("[%s,%s,%s,%s,%s]" % (slope_left, slope_mid_left, slope_mid, slope_mid_right, slope_right))
 
             MID_X = img.shape[0]/2
             CTE = 0

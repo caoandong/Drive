@@ -111,6 +111,39 @@ def find_orient():
     global orient
     global show_FOV
 
+    elif left_cnt <= right_cnt:
+        # Turn left
+        print 'Turning left?'
+        turning = 2 # 2 means left
+        # Check camera to verify that there's no obstacle on the left
+        if cam_left_line == 0:
+            print 'Turning left'
+            
+            driver.velocity = 16
+            driver.angle = -100
+            drive_pub.publish(driver)
+            # reset timer
+            prev_time = now_time = rospy.get_time()
+            return
+        else:
+            # Turn right
+            print 'Left is no good, how about right?'
+            turn_right = 1
+
+    elif right_cnt <= left_cnt or turn_right == 1:
+        # Turn right
+        print 'Turning right?'
+        turning = 3 # 3 means right
+        if cam_right_line == 0:
+            print 'Turning right'
+            
+            driver.velocity = 16
+            driver.angle = 100
+            drive_pub.publish(driver)
+            # reset timer
+            prev_time = now_time = rospy.get_time()
+            return
+
     # M = np.array([[-0.24825365335095023, -1.3835463057733923, 360.9934788630403],
     #               [-0.09005486236297656, -3.1198655572818654, 712.6915509275204], 
     #               [-0.00013159536138092456, -0.0047202178254111115, 1.0]])
@@ -440,6 +473,43 @@ def col_free(param):
     global line_map
     global show_pred_car
 
+    front_cnt = 0
+    left_cnt = 0
+    right_cnt = 0
+    for line in env_lines:
+        if front_probe.intersects(line):
+            front_cnt += 1
+        if left_probe.intersects(line):
+            left_cnt += 1
+        if right_probe.intersects(line):
+            right_cnt += 1
+    if front_cnt == 0:
+        print 'Go ahead'
+        driver.velocity = 18
+        driver.angle = 0
+        drive_pub.publish(driver)
+        turning = 0
+        turning_complete = 1
+    elif left_cnt > 0 or right_cnt > 0:
+        print 'Keep turning a bit'
+        for num in range(50):
+            if turning == 2:
+                print 'left'
+                driver.velocity = 20
+                driver.angle = -100
+                drive_pub.publish(driver)
+            elif turning == 3:
+                print 'right'
+                driver.velocity = 20
+                driver.angle = 100
+                drive_pub.publish(driver)
+        print 'Go ahead but be careful'
+        driver.velocity = 16
+        driver.angle = 0
+        drive_pub.publish(driver)
+        turning = 0
+        turning_complete = 1
+
     print '----------------start checking collision----------------'
 
     car_prev = car
@@ -610,29 +680,29 @@ def plot_line(lines):
     # axes.add_collection(lc)
 
 def lin_map(val, in_left, in_right, out_left, out_right):
-        k = (float(out_right) - out_left)/(in_right - in_left)
-        b = out_left - k*in_left
-        return k*val+b
+    k = (float(out_right) - out_left)/(in_right - in_left)
+    b = out_left - k*in_left
+    return k*val+b
 
 
 def map_velocity(v):
-        # unit: m/s
-        v_map = 0
-        if v > 0:
-                if v >= 15.5 and v <= 20:
-                        v_map = lin_map(float(v), 15.5, 20.0, 0.0, 0.304)
-                        # v_map = arduino_map(float(v), 15.5, 20, 0, 0.304)
-                elif v > 20:
-                        v_map = 0.304
-        elif v < 0:
-                if v <= -15.5 and v >= -20:
-                        v_map = lin_map(float(v), -20, -15.5, -0.289, 0)
-                elif v < -20:
-                        v_map = -0.289
-        else:
-                # v == 0:
-                v_map = 0
-        return v_map
+    # unit: m/s
+    v_map = 0
+    if v > 0:
+            if v >= 15.5 and v <= 20:
+                    v_map = lin_map(float(v), 15.5, 20.0, 0.0, 0.304)
+                    # v_map = arduino_map(float(v), 15.5, 20, 0, 0.304)
+            elif v > 20:
+                    v_map = 0.304
+    elif v < 0:
+            if v <= -15.5 and v >= -20:
+                    v_map = lin_map(float(v), -20, -15.5, -0.289, 0)
+            elif v < -20:
+                    v_map = -0.289
+    else:
+            # v == 0:
+            v_map = 0
+    return v_map
 
 def map_angle(angle):
         # unit: radians
@@ -643,6 +713,7 @@ def map_angle(angle):
         # ang_map = -1*ang_map
 
         return ang_map
+
 def inv_angle(sin_val, cos_val):
     s1 = np.arcsin(sin_val)
     s3 = np.arccos(cos_val)

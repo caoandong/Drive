@@ -21,8 +21,8 @@ def callback_hedge(pos):
 
 	msg.pose.pose.position.x = pos.x_m
 	msg.pose.pose.position.y = pos.y_m
-	msg.pose.covariance =   [0.004, 0.0,  0.0,  0.0, 0.0,  0.0,
-								 0.0,  0.004,  0.0,  0.0, 0.0,  0.0,
+	msg.pose.covariance =   [0.01, 0.0,  0.0,  0.0, 0.0,  0.0,
+								 0.0,  0.01,  0.0,  0.0, 0.0,  0.0,
 								 0.0,  0.0, 99999,  0.0,  0.0,  0.0,
 								 0.0,  0.0,  0.0,  99999,  0.0,  0.0,
 								 0.0,   0.0,  0.0,  0.0,  99999,  0.0,

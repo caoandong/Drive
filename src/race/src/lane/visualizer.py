@@ -163,6 +163,69 @@ def plot_line(lines):
     lc = mc.LineCollection(line_pts, linewidths=1)
     ax.add_collection(lc)
 
+# Update animation
+def update_anim(num):
+    global car
+    global car_pos
+    global car_pos_new
+    global car_orient
+    global car_orient_new
+
+    global FOV
+    global FOV_pos
+    global FOV_pos_new
+    global FOV_orient
+    global FOV_orient_new
+
+    print 'input car_pos_new: ', car_pos_new
+    print 'input car_orient_new: ', car_orient_new
+
+    if abs(car_orient[0] - car_orient_new[0]) >= 0.00001 and abs(car_orient[1] - car_orient_new[1]) >= 0.00001:
+        
+        car_ang_off = np.dot(np.array(car_orient), np.array(car_orient_new))/(np.linalg.norm(car_orient)*np.linalg.norm(car_orient_new))   
+        print 'dot: ', car_ang_off
+        car_ang_off = np.arccos(car_ang_off)
+        cross = np.cross(np.array(car_orient), np.array(car_orient_new))
+        if cross < 0:
+            car_ang_off = -1*car_ang_off
+        car_orient = car_orient_new
+        print 'angle offset: ', np.degrees(car_ang_off)
+        car = affinity.rotate(car, car_ang_off, origin='center', use_radians=True)
+
+    car_x_off = car_pos_new[0] - car_pos[0]
+    car_y_off = car_pos_new[1] - car_pos[1]
+    car_pos = car_pos_new
+    # print 'car position offset: ', car_x_off, car_y_off
+    car = affinity.translate(car, xoff=car_x_off, yoff=car_y_off)
+
+    x,y = car.exterior.xy
+    car_plot.set_data(x,y)
+
+    # Update FOV
+    if show_FOV:
+        FOV_pos_new = car_pos
+        FOV_orient_new = car_orient
+        if abs(FOV_orient[0] - FOV_orient_new[0]) >= 0.00001 and abs(FOV_orient[1] - FOV_orient_new[1]) >= 0.00001:
+            FOV_ang_off = np.dot(np.array(FOV_orient), np.array(FOV_orient_new))/(np.linalg.norm(FOV_orient)*np.linalg.norm(FOV_orient_new))
+            FOV_ang_off = np.arccos(FOV_ang_off)
+            cross = np.cross(np.array(FOV_orient), np.array(FOV_orient_new))
+            if cross < 0:
+                FOV_ang_off = -1*FOV_ang_off
+            FOV_orient = FOV_orient_new
+            print 'angle offset of FOV: ', FOV_ang_off
+            FOV = affinity.rotate(FOV, FOV_ang_off, origin=(FOV_pos[0], FOV_pos[1]), use_radians=True)
+
+        FOV_x_off = FOV_pos_new[0] - FOV_pos[0]
+        FOV_y_off = FOV_pos_new[1] - FOV_pos[1]
+        FOV_pos = FOV_pos_new
+        print 'FOV position offset: ', FOV_x_off, FOV_y_off
+        FOV = affinity.translate(FOV, xoff=FOV_x_off, yoff=FOV_y_off)
+        
+        x,y = FOV.exterior.xy
+        FOV_plot.set_data(x,y)
+
+    return car_plot, FOV_plot
+
 def update_anim(num):
     global car
     global car_plot
@@ -272,7 +335,7 @@ if __name__ == '__main__':
         linewidth=3, solid_capstyle='round')
     plot_line(line_map)
 
-    animation = anim.FuncAnimation(fig, update_anim, frames=25, blit=True)
+    animation = anim.FuncAnimation(fig, update_anim, frames=20, blit=True)
 
     plt.show()
 

@@ -20,8 +20,8 @@
         <!-- don't add imu_node here.. because it won't read my_razor.yaml -->
      
         <node name="serial_node" pkg="rosserial_python" type="serial_node.py"  output="screen">
-                <param name="port" type="str" value="/dev/serial/by-id/usb-Teensyduino_USB_Serial_3098550-if00" />
-                <!-- <param name="port" type="str" value="/dev/ttyTeensy" /> -->
+                <!-- <param name="port" type="str" value="/dev/serial/by-id/usb-Teensyduino_USB_Serial_3098550-if00" /> -->
+                <param name="port" type="str" value="/dev/ttyTeensy" />
 		<!-- see this https://unix.stackexchange.com/questions/66901/how-to-bind-usb-device-under-a-static-name -->
         </node>
         <!-- Launch the IMU -->

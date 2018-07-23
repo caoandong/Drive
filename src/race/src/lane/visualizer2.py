@@ -19,7 +19,7 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 
 import shapely
-from shapely.geometry import Point, LineString, Polygon
+from shapely.geometry import Point, LineString, Polygon, MultiLineString
 from shapely import affinity
 import map_gen
 import matplotlib.pyplot as plt
@@ -35,6 +35,9 @@ offset = 0.13 # meters
 car = Polygon([(-car_length/2, car_width/2),(car_length/2, car_width/2),
                        (car_length/2, -car_width/2),(-car_length/2, -car_width/2)])
 car_pos = [0,0] # Center of the car, NOT the beacon
+car_x_off = 0.0
+car_y_off = 0.0
+car_ang_off = 0.0
 car_orient = car_orient_new = [1,0] # Inital direction is along the x-axis
 # Initialize car
 car_pos = car_pos_new = [0,0]
@@ -45,10 +48,26 @@ show_FOV = 0
 FOV_pos = FOV_pos_new = [0,0]
 FOV_orient = FOV_orient_new = car_orient
 
-# Map parameters that determine the size and orientation of the map
-p0 = [4.180, 4.329]
-p1 = [1.780, 2.558]
+# Initialize probes
+side_probe_len = 0.5
+front_probe_len = 1
+shift = 0.3
+probes = Polygon([(0.0, 0.0), (0.0, side_probe_len), (0.0, 0.0), (0.0, -1*side_probe_len),
+                 (0.0, 0.0), (front_probe_len+shift, 0.0), (0.0, 0.0), (0.1+shift, 0.0101), (0.2+shift, 0.0417),
+                 (0.3+shift, 0.1), (0.4+shift, 0.2), (0.5+shift, 0.5), (0.4+shift, 0.2), (0.3+shift, 0.1), (0.2+shift, 0.0417),
+                 (0.1+shift, 0.0101), (0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.0417), (0.3+shift, -0.1), 
+                 (0.4+shift, -0.2), (0.5+shift, -0.5), (0.4+shift, -0.2), (0.3+shift, -0.1), (0.2+shift, -0.0417), (0.1+shift, -0.0101), (0.0, 0.0)])
 
+left_probe = LineString([(0.0, 0.0), (0.0, side_probe_len)])
+right_probe = LineString([(0.0, 0.0), (0.0, -1*side_probe_len)])
+front_probe = LineString([(0.0, 0.0), (front_probe_len+shift, 0.0)])
+turn_left_probe = LineString([(0.0, 0.0), (0.1+shift, 0.0101), (0.2+shift, 0.0417), (0.3+shift, 0.1), (0.4+shift, 0.2), (0.5+shift, 0.5)])
+turn_right_probe = LineString([(0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.0417), (0.3+shift, -0.1), (0.4+shift, -0.2), (0.5+shift, -0.5)])
+
+
+# Map parameters that determine the size and orientation of the map
+p0 = [0.765, 4.25]
+p1 = [2.22, 2.105]
 
 # Helper functions
 
@@ -108,12 +127,41 @@ def callback_car(string):
     data = eval(string.data)
     car_pos_new = data[0]
     car_orient_new = data[1]
-    
 
-def callback_FOV(string):
-    global show_FOV
+def update_pose_diff():
+    global car, car_pos, car_pos_new, car_orient, car_orient_new
 
-    show_FOV = eval(string.data)
+    rotate = 0
+
+    if abs(car_orient[0] - car_orient_new[0]) >= 0.00001 and abs(car_orient[1] - car_orient_new[1]) >= 0.00001:
+        rotate = 1
+        car_ang_off = np.dot(np.array(car_orient), np.array(car_orient_new))/(np.linalg.norm(car_orient)*np.linalg.norm(car_orient_new))   
+        print 'dot: ', car_ang_off
+        car_ang_off = np.arccos(car_ang_off)
+        cross = np.cross(np.array(car_orient), np.array(car_orient_new))
+        if cross < 0:
+            car_ang_off = -1*car_ang_off
+        car_orient = car_orient_new
+        print 'angle offset: ', np.degrees(car_ang_off)
+
+    center = (car_pos[0], car_pos[1])
+    car_x_off = car_pos_new[0] - car_pos[0]
+    car_y_off = car_pos_new[1] - car_pos[1]
+    car_pos = car_pos_new
+
+    return rotate, car_ang_off, center, car_x_off, car_y_off
+
+def update_car(rotate, car_ang_off, center, car_x_off, car_y_off):
+    global car
+
+    if rotate:
+        car = affinity.rotate(car, car_ang_off, origin='center', use_radians=True)
+
+    car = affinity.translate(car, xoff=car_x_off, yoff=car_y_off)
+
+# def update_probes()
+
+# def update_FOV()
 
 # Update animation
 def update_anim(num):
@@ -129,8 +177,18 @@ def update_anim(num):
     global FOV_orient
     global FOV_orient_new
 
+    global probes
+    global probe_plot
+
+    global left_probe, right_probe
+    global front_probe
+    global turn_left_probe, turn_right_probe
+
     print 'input car_pos_new: ', car_pos_new
     print 'input car_orient_new: ', car_orient_new
+
+    center = (car_pos[0], car_pos[1])
+    car_ang_off = 0
 
     if abs(car_orient[0] - car_orient_new[0]) >= 0.00001 and abs(car_orient[1] - car_orient_new[1]) >= 0.00001:
         
@@ -144,6 +202,7 @@ def update_anim(num):
         print 'angle offset: ', np.degrees(car_ang_off)
         car = affinity.rotate(car, car_ang_off, origin='center', use_radians=True)
 
+    
     car_x_off = car_pos_new[0] - car_pos[0]
     car_y_off = car_pos_new[1] - car_pos[1]
     car_pos = car_pos_new
@@ -152,6 +211,35 @@ def update_anim(num):
 
     x,y = car.exterior.xy
     car_plot.set_data(x,y)
+
+    # Update probes
+    if car_ang_off != 0:
+        probes = affinity.rotate(probes, car_ang_off, origin=center, use_radians=True)
+    probes = affinity.translate(probes, xoff=car_x_off, yoff=car_y_off)
+    x,y = probes.exterior.xy
+    probe_plot.set_data(x,y)
+
+    left_probe = affinity.translate(left_probe, xoff=car_x_off, yoff=car_y_off)
+    left_probe = affinity.rotate(left_probe, car_ang_off, origin=(car_pos[0], car_pos[1]), use_radians=True)
+    right_probe = affinity.translate(right_probe, xoff=car_x_off, yoff=car_y_off)
+    right_probe = affinity.rotate(right_probe, car_ang_off, origin=(car_pos[0], car_pos[1]), use_radians=True)
+    front_probe = affinity.translate(front_probe, xoff=car_x_off, yoff=car_y_off)
+    front_probe = affinity.rotate(front_probe, car_ang_off, origin=(car_pos[0], car_pos[1]), use_radians=True)
+    turn_left_probe = affinity.translate(turn_left_probe, xoff=car_x_off, yoff=car_y_off)
+    turn_left_probe = affinity.rotate(turn_left_probe, car_ang_off, origin=(car_pos[0], car_pos[1]), use_radians=True)
+    turn_right_probe = affinity.translate(turn_right_probe, xoff=car_x_off, yoff=car_y_off)
+    turn_right_probe = affinity.rotate(turn_right_probe, car_ang_off, origin=(car_pos[0], car_pos[1]), use_radians=True)
+
+    x,y = left_probe.coords.xy
+    left_probe_plot.set_data(x,y)
+    x,y = right_probe.coords.xy
+    right_probe_plot.set_data(x,y)
+    x,y = front_probe.coords.xy
+    front_probe_plot.set_data(x,y)
+    x,y = turn_left_probe.coords.xy
+    turn_left_probe_plot.set_data(x,y)
+    x,y = turn_right_probe.coords.xy
+    turn_right_probe_plot.set_data(x,y)
 
     # Update FOV
     if show_FOV:
@@ -176,8 +264,7 @@ def update_anim(num):
         x,y = FOV.exterior.xy
         FOV_plot.set_data(x,y)
 
-    return car_plot, FOV_plot
-
+    return car_plot, FOV_plot, probe_plot, left_probe_plot, right_probe_plot, front_probe_plot, turn_left_probe_plot, turn_right_probe_plot
 
 
 rospy.init_node('visualizer')
@@ -185,7 +272,6 @@ rospy.init_node('visualizer')
 if __name__ == '__main__':
 
     rospy.Subscriber('/lane_driver/car', String, callback_car)
-    rospy.Subscriber('/lane_driver/FOV', String, callback_FOV)
 
     # Initialize the plot
     fig = plt.figure()
@@ -193,6 +279,18 @@ if __name__ == '__main__':
     car_plot, = ax.plot([], [], color='#6699cc', fillstyle='full',
         linewidth=3, solid_capstyle='round')
     FOV_plot, = ax.plot([], [], color='b', alpha=0.5, fillstyle='full',
+        linewidth=3, solid_capstyle='round')
+    probe_plot, = ax.plot([], [], color='r', alpha=0.5, fillstyle='full',
+        linewidth=3, solid_capstyle='round')
+    left_probe_plot, = ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+        linewidth=3, solid_capstyle='round')
+    right_probe_plot, = ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+        linewidth=3, solid_capstyle='round')
+    front_probe_plot, = ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+        linewidth=3, solid_capstyle='round')
+    turn_left_probe_plot, = ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+        linewidth=3, solid_capstyle='round')
+    turn_right_probe_plot, = ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
         linewidth=3, solid_capstyle='round')
 
     # Initialize the map
