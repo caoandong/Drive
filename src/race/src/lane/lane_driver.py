@@ -288,6 +288,162 @@ def find_orient():
 
 line_slope = []
 
+def navigate():
+    global now_time
+    global prev_time
+    global car_pos, car_orient, prev_pos
+    global left_probe, right_probe, front_probe, turn_left_probe, turn_right_probe
+    global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line
+    global env_lines
+    global driver, driver_pub
+    global turning, turning_complete
+    global prev_time, now_time
+
+    print 'Updating probes'
+    update_probes()
+
+    if turning == 0:
+        print 'number of env_lines: ', len(env_lines)
+        for line in env_lines:
+            print 'car pose: ', car_pos, car_orient
+            print 'front_probe: ', front_probe
+            print 'line: ', line
+            if not front_probe.intersects(line):
+                # Keep moving forward
+                driver.velocity = 18
+                driver.angle = 0
+                drive_pub.publish(driver)
+            else:
+                # Slow down
+                print 'There is a line, slowing down'
+                driver.velocity = 15.6
+                driver.angle = 0
+                drive_pub.publish(driver)
+                turning = 1
+                break
+        if turning == 1:
+            left_cnt = 0
+            right_cnt = 0
+            for line in env_lines:
+                if turn_left_probe.intersects(line):
+                    left_cnt += 1
+                if turn_right_probe.intersects(line):
+                    right_cnt += 1
+            print 'left intersection count: ', left_cnt
+            print 'right intersection count: ', right_cnt
+            print 'check mid left line: ', cam_mid_left_line
+            print 'check mid right line: ', cam_mid_right_line
+            if left_cnt == 0:
+                turn_left()
+                return
+            elif right_cnt == 0:
+                turn_right()
+                return
+            elif type(cam_mid_left_line) != int:
+                print 'check mid left line: ', cam_mid_left_line
+                turn_left()
+                return
+            elif type(cam_mid_right_line) != int:
+                print 'check mid right line: ', cam_mid_right_line
+                turn_right()
+                return
+            # elif type(cam_mid_line) != int:
+            #     print 'Check mid line: ', cam_mid_line
+            #     p0 = cam_left_line[0]
+            #     p1 = cam_left_line[1]
+            #     x0 = p0[0]
+            #     x1 = p1[0]
+            #     dist_0 = 320 - x0
+            #     dist_1 = x1 - 320
+            #     # TODO: make a count of the distance (because the slope varies a lot)
+            #     print 'distance to middle of the frame: ', dist_0, dist_1
+            #     if dist_0 < dist_1:
+            #         turn_right()
+            #         return
+            #     else:
+            #         turn_left()
+            #         return
+            else:
+                print 'Cannot decide, slowly moving forward.'
+                turning = 0
+                driver.velocity = 16
+                driver.angle = 0
+                drive_pub.publish(driver)
+    else:
+        print 'Update position and orientation'
+        now_time = rospy.get_time()
+        dt = now_time - prev_time
+        prev_time = now_time
+        print 'dt: ', dt
+        update_turning(dt)
+        print 'Updating probes'
+        update_probes()
+
+        if turning != 0:
+            # print 'Are we sure about this direction?'
+            # if (type(cam_left_line) != int) and (type(cam_mid_right_line) != int) and (type(cam_mid_left_line) == int):
+            #     if turning != 3:
+            #         global FOV
+            #         update_FOV()
+            #         FOV_lines = []
+            #         for line in env_lines:
+            #             FOV_lines.append(line)
+            #         if len(FOV_lines) > 1:
+            #             for line in FOV_lines:
+            #         turn_right()
+            #         return
+            # elif (type(cam_right_line) != int) and (type(cam_mid_left_line) != int) and (type(cam_mid_right_line) == int):
+            #     if turning != 2:
+            #         turn_left()
+            #         return
+            if turning == 2:
+                print 'Keep turning left'
+                driver.velocity = 20
+                driver.angle = -100
+                drive_pub.publish(driver)
+            elif turning == 3:
+                print 'Keep turning right'
+                driver.velocity = 20
+                driver.angle = 100
+                drive_pub.publish(driver)
+        # Check whether or not to stop turning
+        if type(cam_left_line) != int and type(cam_right_line) != int:
+            print 'Going forward ?'
+            print 'The camera says: ', cam_left_line, cam_right_line
+            # check the slope of the undistorted left and right line
+
+            p0 = cam_left_line[0]
+            p1 = cam_left_line[1]
+            p0 = undist_cam(p0)
+            p1 = undist_cam(p1)
+            vec = np.array(p1) - np.array(p0)
+            dot = np.dot(vec, np.array([0,1]))/(np.linalg.norm(vec))
+            print 'dot of left vec: ', dot
+            if abs(dot) > 0.85:
+                print 'Go ahead'
+                driver.velocity = 16
+                driver.angle = 0
+                drive_pub.publish(driver)
+                turning = 0
+                turning_complete = 1
+                return
+
+            p0 = cam_right_line[0]
+            p1 = cam_right_line[1]
+            p0 = undist_cam(p0)
+            p1 = undist_cam(p1)
+            vec = np.array(p1) - np.array(p0)
+            dot = np.dot(vec, np.array([0,1]))/(np.linalg.norm(vec))
+            print 'dot of right vec: ', dot
+            if abs(dot) > 0.85:
+                print 'Go ahead'
+                driver.velocity = 16
+                driver.angle = 0
+                drive_pub.publish(driver)
+                turning = 0
+                turning_complete = 1
+                return
+
 def callback_orient(data):
     global line_slope
     line_slope = eval(data.data)

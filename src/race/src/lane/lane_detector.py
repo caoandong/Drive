@@ -263,9 +263,9 @@ def detect(org_image, wider_mask=False):
                 sol_2 = (poly_mid - max_x_val).roots
                 sol_2 = np.asscalar(sol_2)
 
-                slope_mid = [[min_x_val, sol_1], [max_x_val, sol_2]]
+                slope_mid = [[min_x_val, sol_1],[max_x_val, sol_2]]
                 slope_mid = str(slope_mid)
-                
+
                 try:
                     cv2.line(img, (min_x_val, int(sol_1)), (max_x_val, int(sol_2)), (0, 0, 255), 5)
                 except:
@@ -283,7 +283,7 @@ def detect(org_image, wider_mask=False):
                 sol_2 = (poly_left_mid - left_mid_x).roots
                 sol_2 = np.asscalar(sol_2)
 
-                slope_mid_left = [[0, sol_1], [left_mid_x, sol_2]]
+                slope_mid_left = [[0, sol_1],[left_mid_x, sol_2]]
                 slope_mid_left = str(slope_mid_left)
 
                 try:
@@ -306,7 +306,7 @@ def detect(org_image, wider_mask=False):
                 sol_2 = (poly_right_mid - 640).roots
                 sol_2 = np.asscalar(sol_2)
 
-                slope_mid_right = [[right_mid_x, sol_1], [640, sol_2]]
+                slope_mid_right = [[right_mid_x, sol_1],[640, sol_2]]
                 slope_mid_right = str(slope_mid_right)
 
                 try:

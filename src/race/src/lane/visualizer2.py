@@ -49,9 +49,9 @@ FOV_pos = FOV_pos_new = [0,0]
 FOV_orient = FOV_orient_new = car_orient
 
 # Initialize probes
-side_probe_len = 0.5
+side_probe_len = 0.6
 front_probe_len = 1
-shift = 0.3
+shift = 0.2
 probes = Polygon([(0.0, 0.0), (0.0, side_probe_len), (0.0, 0.0), (0.0, -1*side_probe_len),
                  (0.0, 0.0), (front_probe_len+shift, 0.0), (0.0, 0.0), (0.1+shift, 0.0101), (0.2+shift, 0.0417),
                  (0.3+shift, 0.1), (0.4+shift, 0.2), (0.5+shift, 0.5), (0.4+shift, 0.2), (0.3+shift, 0.1), (0.2+shift, 0.0417),
@@ -66,10 +66,38 @@ turn_right_probe = LineString([(0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.
 
 
 # Map parameters that determine the size and orientation of the map
-p0 = [0.765, 4.25]
-p1 = [2.22, 2.105]
+p0 = [0.455, 4.408]
+p1 = [2.30, 2.15]
 
 # Helper functions
+# Check cross product from vec1 to vec2
+def check_cross(vec1, vec2):
+    cross = np.cross(np.array(vec1), np.array(vec2))
+    return np.asscalar(cross)
+
+# Find the angle from vec1 to vec2
+def find_ang(vec1, vec2):
+    ang_ret = 0
+    if (np.array(vec1).tolist() != 0) and (np.array(vec2).tolist() != 0):
+        vec1 = np.array(vec1)/float(np.linalg.norm(vec1))
+        vec2 = np.array(vec2)/float(np.linalg.norm(vec2))
+        print 'vec1: ', vec1
+        print 'vec2: ', vec2    
+        dot = np.dot(vec1, vec2)
+
+        cross = check_cross(vec1, vec2)
+
+        print 'cross: ', cross
+        if cross >= 0:
+            # rotate vec1 counter_clockwise
+            print 'dot: ', dot
+            ang_ret = np.arccos(np.clip(dot, -1.0, 1.0))
+        else:
+            # rotate vec1 clockwise
+            print 'dot: ', dot
+            ang_ret = -1*np.arccos(np.clip(dot, -1.0, 1.0))
+
+    return ang_ret
 
 # Find the plot limits
 def get_lim(line_map_plot):
@@ -246,11 +274,7 @@ def update_anim(num):
         FOV_pos_new = car_pos
         FOV_orient_new = car_orient
         if abs(FOV_orient[0] - FOV_orient_new[0]) >= 0.00001 and abs(FOV_orient[1] - FOV_orient_new[1]) >= 0.00001:
-            FOV_ang_off = np.dot(np.array(FOV_orient), np.array(FOV_orient_new))/(np.linalg.norm(FOV_orient)*np.linalg.norm(FOV_orient_new))
-            FOV_ang_off = np.arccos(FOV_ang_off)
-            cross = np.cross(np.array(FOV_orient), np.array(FOV_orient_new))
-            if cross < 0:
-                FOV_ang_off = -1*FOV_ang_off
+            FOV_ang_off = find_ang(FOV_orient, FOV_orient_new)
             FOV_orient = FOV_orient_new
             print 'angle offset of FOV: ', FOV_ang_off
             FOV = affinity.rotate(FOV, FOV_ang_off, origin=(FOV_pos[0], FOV_pos[1]), use_radians=True)
