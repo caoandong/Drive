@@ -81,20 +81,20 @@ def find_ang(vec1, vec2):
     if (np.array(vec1).tolist() != 0) and (np.array(vec2).tolist() != 0):
         vec1 = np.array(vec1)/float(np.linalg.norm(vec1))
         vec2 = np.array(vec2)/float(np.linalg.norm(vec2))
-        print 'vec1: ', vec1
-        print 'vec2: ', vec2    
+        # print 'vec1: ', vec1
+        # print 'vec2: ', vec2    
         dot = np.dot(vec1, vec2)
 
         cross = check_cross(vec1, vec2)
 
-        print 'cross: ', cross
+        # print 'cross: ', cross
         if cross >= 0:
             # rotate vec1 counter_clockwise
-            print 'dot: ', dot
+            # print 'dot: ', dot
             ang_ret = np.arccos(np.clip(dot, -1.0, 1.0))
         else:
             # rotate vec1 clockwise
-            print 'dot: ', dot
+            # print 'dot: ', dot
             ang_ret = -1*np.arccos(np.clip(dot, -1.0, 1.0))
 
     return ang_ret

@@ -288,6 +288,33 @@ def find_orient():
 
 line_slope = []
 
+def dist_pt_line(pt, line_pt, line_slope):
+    a = np.array(line_pt)
+    n = np.array(line_slope)
+    p = np.array(pt)
+    print 'a: ', a
+    print 'n: ', n
+    print 'p: ', p
+    dist = (a-p)-np.dot(n, (a-p))*n
+    return dist.tolist()
+
+def dist_mid_lane():
+    global left_lane, right_lane, left_lane_pts, right_lane_pts
+    global car_pos, car_orient
+
+    mid_pt = (np.array(left_lane_pts[0])+np.array(right_lane_pts[0]))/2.0
+    print 'midpoint between left and right: ', mid_pt
+    # slope = (np.array(left_lane)+np.array(right_lane))/2.0
+    print 'left_lane does not work: ', left_lane, right_lane
+    slope = left_lane
+    # slope = np.array(left_lane_pts[1])-np.array(left_lane_pts[0])
+    # slope = slope/np.linalg.norm(slope)
+    # slope = align_vec(slope, car_orient)
+    print 'slope between left and right: ', slope
+
+    dist = dist_pt_line(car_pos, mid_pt, slope)
+    return dist
+
 def navigate():
     global now_time
     global prev_time
