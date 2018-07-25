@@ -966,6 +966,198 @@ def joy_callback(data):
 #     poly.set_data(x,y)
 #     return poly,
 
+# Extract the camera data to update the orientation
+def callback_camera(string):
+    global START
+    global init
+    global car_pos, car_orient
+    global left_lane, right_lane
+    global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line
+    global turning, turning_complete
+    global cam_pos_shift
+
+    # The camera's position on the undistorted image frame, i.e. the bottom
+    O = [300, -625]
+
+    if START == 1 and init > 3 and turning == 0:
+
+        print 'left_lane: ', left_lane
+        print 'right_lane: ', right_lane
+
+        data = eval(string.data)
+        cam_left_line = data[0]
+        cam_mid_left_line = data[1]
+        cam_mid_line = data[2]
+        cam_mid_right_line = data[3]
+        cam_right_line = data[4]
+        left_ang = mid_ang = right_ang = ang_off = 0
+        left_dist = right_dist = 0
+        counter = 0
+
+        print 'left line: ', cam_left_line
+        print 'right line: ', cam_right_line
+        print 'mid left line: ', cam_mid_left_line
+        print 'mid right line: ', cam_mid_right_line
+        print 'mid line: ', cam_mid_line
+
+        if turning_complete == 1:
+            turning_complete = 0
+            driver.velocity = 15.6
+            driver.angle = 0
+            drive_pub.publish(driver)
+            print 'slow down, updating the environment'
+            update_env()
+            update_probes()
+            left_lane, right_lane, left_lane_pts, right_lane_pts = get_left_right()
+            print 'update the left and right lane: ', left_lane, right_lane
+            driver.velocity = 18
+            driver.angle = 0
+            drive_pub.publish(driver)
+
+        if type(cam_left_line) != int and np.array(left_lane).tolist() != [0,0]:
+            p0 = cam_left_line[0]
+            p1 = cam_left_line[1]
+            p0 = undist_cam(p0)
+            print 'p0 undistorted: ', p0
+            p1 = undist_cam(p1)
+            vec = np.array(p1) - np.array(p0)
+            vec = align_vec(vec, np.array([0,1]))
+            left_lane = align_vec(np.array(left_lane), np.array(car_orient))
+            left_ang = find_ang(vec, left_lane)
+            print 'left angle: ', np.degrees(left_ang)
+
+            # Find the distance to the center
+
+            left_dist = abs(300 - p0[0])
+            left_dist = float(left_dist)*0.6/50
+            print 'left_dist: ', left_dist
+
+            counter += 1
+        if type(cam_right_line) != int and np.array(right_lane).tolist() != [0,0]:
+            p0 = cam_right_line[0]
+            p1 = cam_right_line[1]
+            p0 = undist_cam(p0)
+            print 'p0 undistorted: ', p0
+            p1 = undist_cam(p1)
+            vec = np.array(p0) - np.array(p1)
+            vec = align_vec(vec, np.array([0,1]))
+            right_lane = align_vec(np.array(right_lane), np.array(car_orient))
+            right_ang = find_ang(vec, right_lane)
+            print 'right_ang: ', np.degrees(right_ang)
+
+            # Find the distance to the center
+            right_dist = abs(300 - p1[0])
+            right_dist = float(right_dist)*0.6/50
+            print 'right_dist: ', right_dist
+
+            counter += 1
+        if counter != 0:
+            print 'counter: ', counter
+            ang_off = (left_ang + right_ang)/float(counter)
+            print '-------------------final ang offset: ', np.degrees(ang_off)
+
+            # Update the car's orientation
+            orient = [-np.sin(ang_off), np.cos(ang_off)]
+            print 'previous orientation: ', car_orient
+            car_orient = orient
+            print '-------------------camera updated orientation: ', car_orient
+
+            # Update the car's position shift
+            if counter == 2:
+                print 'predicted car width: ', left_dist + right_dist
+                dist = (right_dist - left_dist)/2.0
+                print 'distance from middle: ', dist
+            elif left_dist != 0:
+                dist = car_width/2.0 - left_dist
+            elif right_dist != 0:
+                dist = right_dist - car_width/2.0
+            
+            # find the midpoint of the lanes
+            dist_vec = dist_mid_lane()
+            print 'current position: ', car_pos
+            print 'vector to middle of the lane: ', dist_vec
+            # Find the vector orthogonal to the car's orientation
+            orient = np.array([car_orient[1],-car_orient[0]])
+            orient = dist*orient/np.linalg.norm(orient)
+            print 'orthogonal direction: ', orient
+
+            print '==========> proposed car_pos: ', np.array(car_pos) + dist_vec + orient
+            if abs(left_dist + right_dist) < car_width:
+                cam_pos_shift = dist_vec + orient
+            
+            # TODO: tune the exact coefficients of each vector  
+
+    elif turning != 0:
+        data = eval(string.data)
+        cam_left_line = data[0]
+        cam_mid_left_line = data[1]
+        cam_mid_line = data[2]
+        cam_mid_right_line = data[3]
+        cam_right_line = data[4]
+
+
+# Obtaining the car's pose
+def callback(odom):
+    global START
+    global init
+    global turning, turning_complete
+
+    global odom_pos
+    global car_pos, prev_pos
+    global car_orient
+
+    if START == 1:
+        odom_pos = [odom.pose.pose.position.x,odom.pose.pose.position.y]
+        # Initializing stage:
+        if init < 2:
+            car_pos = odom_pos
+        elif init <= 3:
+            global prev_pos
+            # Updating stage
+            vec = np.array(odom_pos) - np.array(prev_pos)
+            dist = np.linalg.norm(vec)
+            if dist <= 0.75:
+                car_pos = odom_pos
+        elif turning == 0:
+            # Moving straight stage
+
+            global cam_pos_shift
+            odom_pos = np.array(odom_pos) + offset*np.array(car_orient)
+            print '===========>hedge position: ', odom_pos
+            vec = odom_pos - np.array(car_pos)
+            dist = np.linalg.norm(vec)
+            if dist > 0.001:
+                print 'callback odom point distance: ', dist
+                vec = vec/float(dist)
+                # Ellipse or gaussian?
+
+                if dist <= 1:
+                    if turning_complete == 0:
+                        try:
+                            print 'camera shift: ', cam_pos_shift
+                            car_pos = odom_pos + cam_pos_shift
+                            car_pos = car_pos.tolist()
+                        except:
+                            car_pos = odom_pos.tolist()
+                    else:
+                        car_pos = odom_pos.tolist()
+                    print '===========>car_pos updated: ', car_pos
+        # Turning stage
+        else:
+            odom_pos = np.array(odom_pos) + offset*np.array(car_orient)
+            dist = odom_pos - np.array(prev_pos)
+            dist = np.linalg.norm(dist)
+            print 'Turning, restrict update distance: ', dist
+            if dist < 1:
+                dist_2 = odom_pos - np.array(car_pos)
+                dist_2 = np.linalg.norm(dist_2)
+                if dist_2 > 0.001:
+                    scale = 1/(dist_2+1.0)
+                    print 'scaling factor for new position: ', scale
+                    car_pos = (1-scale)*np.array(car_pos)+scale*odom_pos
+                    car_pos = car_pos.tolist()
+                    print 'Updated car_pos: ', car_pos
+
 rospy.init_node('lane_driver', anonymous=True)
 
 START = 0
@@ -1014,7 +1206,7 @@ if __name__ == '__main__':
     rate = rospy.Rate(num_cycles)
 
     while not rospy.is_shutdown():
-        visual_pub_car.publish("[%s, %f]" % (str(car_pos.tolist()), car_ang))
+        visual_pub_car.publish("[%s, %f, %s]" % (str(car_pos.tolist()), car_ang, pred_distrib))
         # plt.pause(0.01)
         # print 'init: ', init, ' START: ', START, ' START_WALKING: ', START_WALKING
         if START == 1:

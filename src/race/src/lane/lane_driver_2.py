@@ -15,6 +15,7 @@
 # For every M steps, check the orientation of the car (ideally in real-time, possibly in another node)
 
 import rospy
+import threading
 
 from race.msg import drive_values
 from race.msg import drive_param
@@ -24,7 +25,7 @@ from std_msgs.msg import String
 from std_msgs.msg import Bool
 from std_msgs.msg import Int32
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Joy
+from sensor_msgs.msg import Joy, Imu
 
 import tf
 import numpy as np
@@ -80,6 +81,148 @@ driver.angle = 0
 p0 = [0.455, 4.408]
 p1 = [2.30, 2.15]
 
+# Printing options
+print_main = 1
+print_local = 0
+
+
+# Threadings
+
+class Predict (threading.Thread):
+    def __init__(self):
+        self.running = False
+        super(Predict, self).__init__()
+
+        # threading.Thread.__init__(self)
+    def start(self):
+        self.running = True
+        super(Predict, self).start()
+    def run(self):
+        global START
+        while self.running and START == 1:
+            print 'Predicting ...'
+    def stop(self):
+        self.running = False
+
+class Update (threading.Thread):
+    def __init__(self):
+        self.running = False
+        super(Update, self).__init__()
+        # threading.Thread.__init__(self)
+    def start(self):
+        self.running = True
+        super(Update, self).start()
+    def run(self):
+        global START
+        while self.running and START == 1:
+            print 'Predicting ...'
+
+    def stop(self):
+        self.running = False
+
+class Localize (threading.Thread):
+    def __init__(self):
+        thread = threading.Thread(target=self.run, args=())
+        thread.daemon = True
+        thread.start()
+
+    def run(self):
+        global START, init
+        global car_pos, car_orient, odom_pos, print_local
+        global update_pose_prev_time, update_pose_now_time, cam_pos_shift
+
+        if print_local == 1:
+            print '//////////Running'
+
+        while True:
+            if START == 1 and init > 3:
+                if print_local == 1:
+                    print '/////////////odom_pos: ', odom_pos
+                # First predict the possible pose distribution
+                ell = predict_pose_distrib()
+                # Modify odom_pos
+                pt = Point(odom_pos[0], odom_pos[1])
+                if ell.contains(pt):
+                    car_pos = odom_pos
+                    
+                    dt = update_pose_now_time - update_pose_prev_time
+                    
+                    if print_local == 1:
+                        print '//////////now_time: ', update_pose_now_time
+                        print '//////////prev_time: ', update_pose_prev_time
+                        print '//////////ellipse contains the odom pos: ', car_pos
+                        print '//////////dt: ', dt
+                    update_pose_prev_time = update_pose_now_time = rospy.get_time()
+                    if print_local == 1:
+                        print '//////////updated time: ', update_pose_now_time
+                # Then correct the pose using camera data
+                cam_correct_pose()
+
+class Navigate (threading.Thread):
+    def __init__(self):
+        self.running = False
+        super(Navigate, self).__init__()
+        # threading.Thread.__init__(self)
+    def start(self):
+        self.running = True
+        super(Navigate, self).start()
+    def run(self):
+        global START
+        while self.running and START == 1:
+            print 'Predicting ...'
+    def stop(self):
+        self.running = False
+
+class Visualize (threading.Thread):
+    def __init__(self):
+        self.running = False
+        super(Visualize, self).__init__()
+        # Initialize the plot
+        self.fig = plt.figure()
+        self.ax = plt.axes(xlim=(-3,5), ylim=(-1,8))
+
+    def start(self):
+        self.running = True
+        super(Visualize, self).start()
+
+    def plot_line(self, lines):
+        line_pts = []
+        for line in lines:
+            pts = []
+            for p in line.boundary:
+                pts.append((p.x,p.y))
+            line_pts.append(pts)
+        lc = mc.LineCollection(line_pts, linewidths=1)
+        self.ax.add_collection(lc)
+        x_lim, y_lim = get_lim(line_map_plot)
+        self.ax.set_xlim(x_lim)
+        self.ax.set_ylim(y_lim)
+    def run(self):
+        global START
+        while self.running and START == 1:
+            # Initialize the plot
+            car_plot, = self.ax.plot([], [], color='#6699cc', fillstyle='full',
+                linewidth=3, solid_capstyle='round')
+            probe_plot, = self.ax.plot([], [], color='r', alpha=0.5, fillstyle='full',
+                linewidth=3, solid_capstyle='round')
+            left_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+                linewidth=3, solid_capstyle='round')
+            right_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+                linewidth=3, solid_capstyle='round')
+            front_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+                linewidth=3, solid_capstyle='round')
+            turn_left_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+                linewidth=3, solid_capstyle='round')
+            turn_right_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+                linewidth=3, solid_capstyle='round')
+            
+            global line_map
+            self.plot_line(line_map)
+
+            self.plt.show()
+
+    def stop(self):
+        self.running = False
 # Basic helper functions:
 
 def quat_to_ang(quat):
@@ -123,6 +266,69 @@ def undist_cam(p):
 
 # Find the left and the right lane to the car
 # TODO: redce the global variable left_lane and right_lane
+
+def list_to_line(l):
+    p0 = l[0]
+    p1 = l[1]
+    line = LineString([(p0[0],p0[1]), (p1[0],p1[1])])
+    return line
+
+def cmp_line_list(line_list):
+    global car_orient
+    line_ret = 0
+    dot_max = -10
+    for line in line_list:
+        p0 = line[0]
+        p1 = line[1]
+        vec = np.array(p1) - np.array(p0)
+        vec = vec/(np.linalg.norm(vec))
+        dot = np.dot(vec, np.array(car_orient))
+        dot = dot/(float(np.linalg.norm(car_orient)))
+        if abs(dot) > dot_max:
+            dot_max = abs(dot)
+            if dot < 0:
+                line_ret = [p1, p0]
+            line_ret = line
+    return line_ret
+
+def get_left_right():
+    global car_orient
+    global car_pos
+    global line_map
+
+    left_lines = left_line = []
+    right_lines = right_line = []
+    left_lines_pts = []
+    right_lines_pts = []
+    left_line_pts = []
+    right_line_pts = []
+
+    left_orient = [-1*car_orient[1], car_orient[0]]
+    left_orient = np.array(left_orient)/np.linalg.norm(left_orient)
+    right_orient = [car_orient[1], -1*car_orient[0]]
+    right_orient = np.array(right_orient)/np.linalg.norm(right_orient)
+    left_probe = np.array(car_pos) + left_orient
+    right_probe = np.array(car_pos) + right_orient
+    left_probe = left_probe.tolist()
+    right_probe = right_probe.tolist()
+    left_probe = list_to_line([car_pos, left_probe])
+    right_probe = list_to_line([car_pos, right_probe])
+
+    for line in line_map:
+        x0, x1 = line.xy[0]
+        y0, y1 = line.xy[1]
+        line_tmp = LineString([(x0, y0), (x1, y1)])
+        if left_probe.intersects(line_tmp):
+            left_lines_pts.append([[x0, y0], [x1, y1]])
+        elif right_probe.intersects(line_tmp):
+            right_lines_pts.append([[x0, y0], [x1, y1]])
+
+    left_line_pts = cmp_line_list(left_lines_pts)
+    right_line_pts = cmp_line_list(right_lines_pts)
+
+
+    return left_line, right_line, left_line_pts, right_line_pts
+
 def get_left_right():
     global car_orient
     global car_pos
@@ -146,25 +352,29 @@ def get_left_right():
         if left_probe.intersects(line):
             left_lines.append(vec)
             left_lines_pts.append([[x0,y0],[x1,y1]])
-            print 'found a left line: ', line
+            if print_main == 1:
+                print 'found a left line: ', line
 
-        if right_probe.intersects(line):
+        elif right_probe.intersects(line):
             right_lines.append(vec)
             right_lines_pts.append([[x0,y0],[x1,y1]])
-            print 'found a right line: ', line
+            if print_main == 1:
+                print 'found a right line: ', line
 
     dot_max = -10
     num_left = len(left_lines)
     num_right = len(right_lines)
 
-    print 'right: ', right_lines_pts
+    if print_main == 1:
+        print 'right: ', right_lines_pts
 
     if num_left > 1:
         for i in range(num_left):
             line_vec = left_lines[i]
             dot_orient = np.dot(line_vec, car_orient)/(float(np.linalg.norm(car_orient)))
             if dot_orient > dot_max:
-                print 'found a better left line: ', line_vec
+                if print_main == 1:
+                    print 'found a better left line: ', line_vec
                 dot_max = dot_orient
                 left_line = line_vec
                 left_line_pts = left_lines_pts[i]
@@ -179,7 +389,8 @@ def get_left_right():
             line_vec = right_lines[i]
             dot_orient = np.dot(line_vec, car_orient)/(float(np.linalg.norm(car_orient)))
             if dot_orient > dot_max:
-                print 'found a better right line: ', line_vec
+                if print_main == 1:
+                    print 'found a better right line: ', line_vec
                 dot_max = dot_orient
                 right_line = line_vec
                 right_line_pts = right_lines_pts[i]
@@ -197,8 +408,9 @@ def get_left_right():
         left_line = right_line
         left_line_pts = right_line_pts
 
-    print 'left_lane_pts: ', left_line_pts
-    print 'right_lane_pts: ', right_line_pts
+    if print_main == 1:
+        print 'left_lane_pts: ', left_line_pts
+        print 'right_lane_pts: ', right_line_pts
 
     return left_line, right_line, left_line_pts, right_line_pts
 
@@ -213,20 +425,20 @@ def find_ang(vec1, vec2):
     if (np.array(vec1).tolist() != 0) and (np.array(vec2).tolist() != 0):
         vec1 = np.array(vec1)/float(np.linalg.norm(vec1))
         vec2 = np.array(vec2)/float(np.linalg.norm(vec2))
-        print 'vec1: ', vec1
-        print 'vec2: ', vec2    
+        # print 'vec1: ', vec1
+        # print 'vec2: ', vec2    
         dot = np.dot(vec1, vec2)
 
         cross = check_cross(vec1, vec2)
 
-        print 'cross: ', cross
+        # print 'cross: ', cross
         if cross >= 0:
             # rotate vec1 counter_clockwise
-            print 'dot: ', dot
+            # print 'dot: ', dot
             ang_ret = np.arccos(np.clip(dot, -1.0, 1.0))
         else:
             # rotate vec1 clockwise
-            print 'dot: ', dot
+            # print 'dot: ', dot
             ang_ret = -1*np.arccos(np.clip(dot, -1.0, 1.0))
 
     return ang_ret
@@ -325,7 +537,6 @@ def map_angle(angle):
         return ang_map
 
 # Turn left
-
 def turn_left():
     global turning, driver, drive_pub
     global prev_time, now_time
@@ -359,13 +570,15 @@ def turn_right():
 
 def find_lane_turn(line):
     global car_pos, car_orient
-    print 'input to find_lane_turn: ', line
+    if print_main == 1:
+        print 'input to find_lane_turn: ', line
     # Find the point in front of the car
     p0 = np.array(line[0])
     p1 = np.array(line[1])
     dist_0 = p0-np.array(car_pos)
     dist_1 = p1-np.array(car_pos)
-    print 'dist_0: ', dist_0, 'dist_1: ', dist_1
+    if print_main == 1:
+        print 'dist_0: ', dist_0, 'dist_1: ', dist_1
     # Compare the orientations
     orient = np.array(car_orient)
     dot0 = np.dot(dist_0, orient)
@@ -387,8 +600,9 @@ def find_intersection():
     left_lane_turn = find_lane_turn(left_lane_pts)
     right_lane_turn = find_lane_turn(right_lane_pts)
 
-    print 'left lane turn: ', left_lane_turn
-    print 'right lane turn: ', right_lane_turn
+    if print_main == 1:
+        print 'left lane turn: ', left_lane_turn
+        print 'right lane turn: ', right_lane_turn
 
 def exist_front_corner():
     global car_pos, car_orient
@@ -400,7 +614,8 @@ def exist_front_corner():
     orient = orient/np.linalg.norm(orient)
     pt = np.array(car_pos) + orient
     pt = pt.tolist()
-    print 'front corner test point: ', pt
+    if print_main == 1:
+        print 'front corner test point: ', pt
 
     intersection = []
 
@@ -424,9 +639,10 @@ def dist_pt_line(pt, line_pt, line_slope):
     a = np.array(line_pt)
     n = np.array(line_slope)
     p = np.array(pt)
-    print 'a: ', a
-    print 'n: ', n
-    print 'p: ', p
+    if print_main == 1:
+        print 'a: ', a
+        print 'n: ', n
+        print 'p: ', p
     dist = (a-p)-np.dot(n, (a-p))*n
     return dist.tolist()
 
@@ -437,7 +653,6 @@ def dist_mid_lane():
     mid_pt = (np.array(left_lane_pts[0])+np.array(right_lane_pts[0]))/2.0
     print 'midpoint between left and right: ', mid_pt
     # slope = (np.array(left_lane)+np.array(right_lane))/2.0
-    print 'left_lane does not work: ', left_lane, right_lane
     slope = left_lane
     # slope = np.array(left_lane_pts[1])-np.array(left_lane_pts[0])
     # slope = slope/np.linalg.norm(slope)
@@ -460,30 +675,34 @@ def update_pose_diff():
     global car_y_off
     global car_ang_off
 
-    print 'pose diff input car_pos_prev: ', car_pos_prev
-    print 'pose diff input car_orient_prev: ', car_orient_prev
-    print 'pose diff car_pos: ', car_pos
-    print 'pose diff car_orient: ', car_orient
+    if print_main == 1:
+        print 'pose diff input car_pos_prev: ', car_pos_prev
+        print 'pose diff input car_orient_prev: ', car_orient_prev
+        print 'pose diff car_pos: ', car_pos
+        print 'pose diff car_orient: ', car_orient
 
     if abs(car_orient[0] - car_orient_prev[0]) >= 0.001 and abs(car_orient[1] - car_orient_prev[1]) >= 0.00001:
         
         car_ang_off = np.dot(np.array(car_orient_prev), np.array(car_orient))/(np.linalg.norm(car_orient)*np.linalg.norm(car_orient_prev))   
-        print 'pose diff dot: ', car_ang_off
+        if print_main == 1:
+            print 'pose diff dot: ', car_ang_off
         car_ang_off = np.arccos(car_ang_off)
         cross = check_cross(car_orient_prev, car_orient)
         if cross < 0:
             car_ang_off = -1*car_ang_off
 
         car_orient_prev = car_orient
-        print 'pose diff angle offset: ', np.degrees(car_ang_off)
+        if print_main == 1:
+            print 'pose diff angle offset: ', np.degrees(car_ang_off)
     else:
         car_ang_off = 0
 
     car_x_off = car_pos[0] - car_pos_prev[0]
     car_y_off = car_pos[1] - car_pos_prev[1]
     car_pos_prev = car_pos
-    print 'pose diff x: ', car_x_off
-    print 'pose diff y: ', car_y_off
+    if print_main == 1:
+        print 'pose diff x: ', car_x_off
+        print 'pose diff y: ', car_y_off
 
 # update the pose of the FOV
 def update_FOV():
@@ -503,8 +722,9 @@ def update_FOV():
     show_FOV = 1
     visual_pub_FOV.publish("%d" % show_FOV)
 
-    print 'old FOV_orient: ', FOV_orient
-    print 'new FOV_orient: ', FOV_orient_new
+    if print_main == 1:
+        print 'old FOV_orient: ', FOV_orient
+        print 'new FOV_orient: ', FOV_orient_new
     if abs(FOV_orient[0] - FOV_orient_new[0]) >= 0.00001 and abs(FOV_orient[1] - FOV_orient_new[1]) >= 0.00001:
         FOV_ang_off = find_ang(FOV_orient, FOV_orient_new)
         FOV_orient = FOV_orient_new
@@ -594,6 +814,102 @@ def update_probes():
     turn_right_probe = affinity.translate(turn_right_probe, xoff=car_x_off, yoff=car_y_off)
     turn_right_probe = affinity.rotate(turn_right_probe, car_ang_off, origin=(car_pos[0], car_pos[1]), use_radians=True)
 
+# Update the car's position and orientation based on camera images
+def cam_correct_pose():
+    global START
+    global init
+    global car_pos, car_orient
+    global left_lane, right_lane
+    global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line
+    global turning, turning_complete
+    global cam_pos_shift
+
+    if START == 1 and init > 3 and turning == 0:
+
+        print 'left_lane: ', left_lane
+        print 'right_lane: ', right_lane
+        print 'left line: ', cam_left_line
+        print 'right line: ', cam_right_line
+        print 'mid left line: ', cam_mid_left_line
+        print 'mid right line: ', cam_mid_right_line
+        print 'mid line: ', cam_mid_line
+
+        left_ang = mid_ang = right_ang = ang_off = 0
+        left_dist = right_dist = 0
+        counter = 0
+
+        if type(cam_left_line) != int and np.array(left_lane).tolist() != [0,0]:
+            p0 = cam_left_line[0]
+            p1 = cam_left_line[1]
+            p0 = undist_cam(p0)
+            p1 = undist_cam(p1)
+            vec = np.array(p1) - np.array(p0)
+            vec = align_vec(vec, np.array([0,1]))
+            left_lane = align_vec(np.array(left_lane), np.array(car_orient))
+            left_ang = find_ang(vec, left_lane)
+            print 'left angle: ', np.degrees(left_ang)
+
+            # Find the distance to the center
+            print 'p0 undistorted: ', p0
+            print 'p1 undistorted: ', p1
+            left_dist = abs(300 - p0[0])
+            left_dist = float(left_dist)*0.6/185
+            print 'left_dist: ', left_dist
+
+            counter += 1
+        if type(cam_right_line) != int and np.array(right_lane).tolist() != [0,0]:
+            p0 = cam_right_line[0]
+            p1 = cam_right_line[1]
+            p0 = undist_cam(p0)
+            p1 = undist_cam(p1)
+            vec = np.array(p0) - np.array(p1)
+            vec = align_vec(vec, np.array([0,1]))
+            right_lane = align_vec(np.array(right_lane), np.array(car_orient))
+            right_ang = find_ang(vec, right_lane)
+            print 'right_ang: ', np.degrees(right_ang)
+
+            # Find the distance to the center
+            print 'p0 undistorted: ', p0
+            print 'p1 undistorted: ', p1
+            right_dist = abs(300 - p1[0])
+            right_dist = float(right_dist)*0.6/185
+            print 'right_dist: ', right_dist
+
+            counter += 1
+        if counter != 0:
+            print 'counter: ', counter
+            ang_off = (left_ang + right_ang)/float(counter)
+            print '-------------------final ang offset: ', np.degrees(ang_off)
+
+            # Update the car's orientation
+            orient = [-np.sin(ang_off), np.cos(ang_off)]
+            print 'previous orientation: ', car_orient
+            car_orient = orient
+            print '-------------------camera updated orientation: ', car_orient
+
+            # Update the car's position shift
+            if counter == 2:
+                print 'predicted car width: ', left_dist + right_dist
+                dist = (right_dist - left_dist)/2.0
+                print 'distance from middle: ', dist
+            elif left_dist != 0:
+                dist = car_width/2.0 - left_dist
+            elif right_dist != 0:
+                dist = right_dist - car_width/2.0
+            
+            # find the midpoint of the lanes
+            dist_vec = dist_mid_lane()
+            print 'current position: ', car_pos
+            print 'vector to middle of the lane: ', dist_vec
+            # Find the vector orthogonal to the car's orientation
+            orient = np.array([car_orient[1],-car_orient[0]])
+            orient = dist*orient/np.linalg.norm(orient)
+            print 'orthogonal direction: ', orient
+
+            print '==========> proposed car_pos: ', np.array(car_pos) + dist_vec + orient
+            if abs(left_dist + right_dist) < car_width:
+                cam_pos_shift = dist_vec + orient
+
 # initalize a guess for the orientation
 def init_orient():
     global init
@@ -607,11 +923,13 @@ def init_orient():
     global car_orient
     global left_lane, left_lane_pts
     global right_lane, right_lane_pts
+    global update_pose_prev_time, update_pose_now_time
 
     global init_pos_list
     global init_orient_list
 
-    print 'time diff inside: ', now_time - prev_time
+    if print_main == 1:
+        print 'time diff inside: ', now_time - prev_time
 
     if prev_pos[0] == 1j and prev_pos[1] == 1j:
         init_pos_list.append(odom_pos)
@@ -665,6 +983,7 @@ def init_orient():
             drive_pub.publish(driver)
             # reset timer
             prev_time = now_time = rospy.get_time()
+            update_pose_prev_time = update_pose_now_time = rospy.get_time()
     elif init == 3:
         # align the orient with the sides
         # find all neighoring lines that have the smallest angle with the measured orientation
@@ -719,6 +1038,163 @@ def init_orient():
         # reset timer
         prev_time = now_time = rospy.get_time()
 
+
+###### Prediction functions ######
+
+def fuse_speed():
+    global imu_vel
+    global driver_vel
+
+    scale = 0.1 # parameter to weigh the different variables
+    speed = 0
+
+    # We trust the driver a lot more
+    speed = (1-scale)*driver_vel + scale*imu_vel
+    imu_vel = speed
+
+    return speed
+
+def fuse_angle():
+    global imu_ang
+    global driver_ang
+
+    scale = 0.01
+    ang = 0
+
+    # We trust the driver a lot more
+    ang = (1-scale)*driver_ang + scale*imu_ang
+    imu_ang = ang
+
+    return ang
+
+def gauss_distrib(a, b):
+    return 1/np.sqrt(2*np.pi*b)*np.exp(-0.5*a**2/float(b))
+
+# Predict the distribution of pose (position and orientation)
+# dt later from driver and IMU data
+def predict_pose_distrib():
+    # Use driver and IMU data to find position reletive to the center line
+    # Predict the motion time dt later
+    # Make a normal distribution in the predicted odom frame
+    # Transform the predicted odom frame to the world frame
+    # Given a new coordinate from GPS, find the reliability of that coord
+
+    global car_pos, car_orient
+    global driver, turning, pred_distrib
+    global update_pose_prev_time, update_pose_now_time, print_local
+
+    update_pose_now_time = rospy.get_time()
+    dt = update_pose_now_time - update_pose_prev_time
+    dt = dt*2 # times 2 because this time measures half from
+    # last car_pos update to next car_pos update  
+    # dt = 0.3 # Set this manually for now
+    if print_local == 1:
+        print 'dt: ', dt
+        print 'Start predicting the pose to find the distribution'
+
+    speed = fuse_speed()
+    ang = fuse_angle()
+    if print_local == 1:
+        print 'predicted speed: ', speed
+        print 'predicted angle: ', ang
+
+    x = car_pos[0]
+    y = car_pos[1]
+    p = np.array([x,y])
+    speed = abs(speed)
+
+    car_ang = find_ang([1,0], car_orient)
+    if print_local == 1:
+        print 'car angle wrt +x-axis: ', np.degrees(car_ang)
+
+    orient = np.array(car_orient)/np.linalg.norm(car_orient)
+
+    if (turning != 0) and (ang > 0.001):
+        p = p.reshape([2,1])
+        orient = orient.reshape([2,1])
+
+        r = car_length/(2*np.tan(ang))
+        r = abs(r)
+        if print_local == 1:
+            print 'dist to O: ', r
+
+        O_x = x+r*np.sin(car_ang)
+        O_y = y-r*np.cos(car_ang)
+        O = [O_x, O_y]
+        if print_local == 1:
+            print 'O: ', O
+
+        O = np.array(O)
+        O = O.reshape([2,1])
+
+        p = p - O
+
+        if print_local == 1:
+            print 'speed: ', speed
+
+        ang_vec = np.array([1, np.tan(ang)])
+        cross = check_cross(np.array(car_orient), ang_vec)
+        if cross >= 0:
+            if print_local == 1:
+                print 'Anti-clockwise'
+            phi = speed*dt/r
+        else:
+            if print_local == 1:
+                print 'Clockwise'
+            phi = -1*speed*dt/r
+        
+        if print_local == 1:
+            print 'rotation: ', np.degrees(phi)
+
+        R = np.array([[np.cos(phi), -np.sin(phi)],[np.sin(phi), np.cos(phi)]])
+        p = np.matmul(R, p)
+        p = p + O
+        p = p.reshape([2])
+        p = p.tolist()
+
+        orient = np.matmul(R, orient)
+        orient = orient.reshape([2])
+        
+    else:
+        p += speed*orient*dt
+        p = p.tolist()
+        orient = orient.tolist()
+
+    print 'predicted position: ', p
+    print 'predicted orientation: ', orient
+
+    dist = np.linalg.norm(np.array(p)-np.array(car_pos))
+    
+    if print_local == 1:
+        print 'distance to original position: ', dist
+
+    # x distribution is the horizontal distribution of angles
+    x0 = 0.3
+    x1 = 0.3*(1-x0)
+    x2 = (1-x0)*(1+abs(speed))
+    x3 = 5*(1-x0)
+    var_x = x0*dist + x1*abs(speed) + x2*abs(ang) + x3*dt
+    print 'var_x: ', var_x
+
+    # y distribution is the verticle distribution of distances
+    y0 = 0.3
+    y1 = 1
+    y2 = 0.7
+    y3 = 5
+    var_y = y0*dist + y1*abs(speed) + y2*abs(ang) + y3*dt
+
+    print 'var_y: ', var_y
+
+    pred_distrib = [p, var_x, var_y]
+
+    ang_off = find_ang([0,1], orient)
+
+    ell = Point(p[0], p[1]).buffer(1)
+    ell = affinity.scale(ell, var_x, var_y)
+    ell = affinity.rotate(ell, ang_off, origin='center', use_radians=True)
+
+    return ell
+
 # Update pose during turning
 def update_turning(dt):
     global car_pos
@@ -736,44 +1212,53 @@ def update_turning(dt):
     speed = abs(speed)
 
     car_ang = find_ang([1,0], car_orient)
-    print 'car angle wrt +x-axis: ', np.degrees(car_ang)
+    if print_main == 1:
+        print 'car angle wrt +x-axis: ', np.degrees(car_ang)
 
     orient = np.array(car_orient).reshape([2,1])
 
     if (turning != 0) and (ang > 0.001):
         r = car_length/(2*np.tan(ang))
         r = abs(r)
-        print 'dist to O: ', r
+        if print_main == 1:
+            print 'dist to O: ', r
 
         O_x = x+r*np.sin(car_ang)
         O_y = y-r*np.cos(car_ang)
         O = [O_x, O_y]
-        print 'O: ', O
+        if print_main == 1:
+            print 'O: ', O
 
         O = np.array(O)
         O = O.reshape([2,1])
 
         p = p - O
-
-        print 'speed: ', speed
+        
+        if print_main == 1:
+            print 'speed: ', speed
 
         ang_vec = np.array([1, np.tan(ang)])
         cross = check_cross(np.array(car_orient), ang_vec)
         if cross >= 0:
-            print 'Anti-clockwise'
+            if print_main == 1:
+                print 'Anti-clockwise'
             phi = speed*dt/r
         else:
-            print 'Clockwise'
+            if print_main == 1:
+                print 'Clockwise'
             phi = -1*speed*dt/r
         
-        print 'rotation: ', np.degrees(phi)
+        if print_main == 1:
+            print 'rotation: ', np.degrees(phi)
 
         R = np.array([[np.cos(phi), -np.sin(phi)],[np.sin(phi), np.cos(phi)]])
         p = np.matmul(R, p)
         p = p + O
         p = p.reshape([2])
         p = p.tolist()
-        print 'Updated position: ', car_pos
+
+        if print_main == 1:
+            print 'Updated position: ', car_pos
         car_pos = p
         
         orient = np.matmul(R, orient)
@@ -790,15 +1275,21 @@ def navigate():
     global driver, driver_pub
     global turning, turning_complete, left_lane_turn, right_lane_turn
 
-    print 'Updating probes'
+    if print_main == 1:
+        print '------------------------- START NAVIGATE --------------------------'
+
+    if print_main == 1:
+        print 'Updating probes'
     update_probes()
 
     if turning == 0:
-        print 'number of env_lines: ', len(env_lines)
+        if print_main == 1:
+            print 'number of env_lines: ', len(env_lines)
         for line in env_lines:
-            print 'car pose: ', car_pos, car_orient
-            print 'front_probe: ', front_probe
-            print 'line: ', line
+            if print_main == 1:
+                print 'car pose: ', car_pos, car_orient
+                print 'front_probe: ', front_probe
+                print 'line: ', line
             if not front_probe.intersects(line):
                 # Keep moving forward
                 driver.velocity = 18
@@ -806,7 +1297,8 @@ def navigate():
                 drive_pub.publish(driver)
             else:
                 # Slow down
-                print 'There is a line, slowing down'
+                if print_main == 1:
+                    print 'There is a line, slowing down'
                 driver.velocity = 15.6
                 driver.angle = 0
                 drive_pub.publish(driver)
@@ -814,10 +1306,11 @@ def navigate():
                 break
         if turning == 1:
             turning = 0
-            print 'Here is what the lane tells me: '
-            print 'left lane: ', left_lane_turn
-            print 'right lane: ', right_lane_turn
-            print '0 means right and 1 means left'
+            if print_main == 1:
+                print 'Here is what the lane tells me: '
+                print 'left lane: ', left_lane_turn
+                print 'right lane: ', right_lane_turn
+                print '0 means right and 1 means left'
 
             left_cnt = 0
             right_cnt = 0
@@ -826,26 +1319,31 @@ def navigate():
                     left_cnt += 1
                 if turn_right_probe.intersects(line):
                     right_cnt += 1
-            print 'left intersection count: ', left_cnt
-            print 'right intersection count: ', right_cnt
+            if print_main == 1:
+                print 'left intersection count: ', left_cnt
+                print 'right intersection count: ', right_cnt
 
             if left_cnt == 0 and type(cam_left_line) == int:
-                print 'left got nothing'
+                if print_main == 1:
+                    print 'left got nothing'
                 turn_left()
                 return
             if right_cnt == 0 and type(cam_right_line) == int:
-                print 'right got nothing'
+                if print_main == 1:
+                    print 'right got nothing'
                 turn_right()
                 return
             if left_lane_turn == 1:
                 if right_lane_turn == 1:
-                    print 'Left turn?'
-                    print 'check left line: ', cam_left_line
+                    if print_main == 1:
+                        print 'Left turn?'
+                        print 'check left line: ', cam_left_line
                     if type(cam_left_line) == int:
                         turn_left()
                         return
                 elif right_lane_turn == 0:
-                    print 'T-turn or cross road?'
+                    if print_main == 1:
+                        print 'T-turn or cross road?'
                     if left_cnt == 0:
                         turn_left()
                         return
@@ -885,14 +1383,17 @@ def navigate():
                 driver.angle = 0
                 drive_pub.publish(driver)
     else:
-        print 'turning value: ', turning
-        print 'Update position and orientation'
+        if print_main == 1:
+            print 'turning value: ', turning
+            print 'Update position and orientation'
         now_time = rospy.get_time()
         dt = now_time - prev_time
         prev_time = now_time
-        print 'dt: ', dt
+        if print_main == 1:
+            print 'dt: ', dt
         update_turning(dt)
-        print 'Updating probes'
+        if print_main == 1:
+            print 'Updating probes'
         update_probes()
 
         if turning != 0:
@@ -932,7 +1433,8 @@ def navigate():
             p1 = undist_cam(p1)
             vec = np.array(p1) - np.array(p0)
             dot = np.dot(vec, np.array([0,1]))/(np.linalg.norm(vec))
-            print 'dot of left vec: ', dot
+            if print_main == 1:
+                print 'dot of left vec: ', dot
             if abs(dot) > 0.85:
                 print 'Go ahead'
                 driver.velocity = 16
@@ -948,7 +1450,8 @@ def navigate():
             p1 = undist_cam(p1)
             vec = np.array(p1) - np.array(p0)
             dot = np.dot(vec, np.array([0,1]))/(np.linalg.norm(vec))
-            print 'dot of right vec: ', dot
+            if print_main == 1:
+                print 'dot of right vec: ', dot
             if abs(dot) > 0.85:
                 print 'Go ahead'
                 driver.velocity = 16
@@ -966,12 +1469,12 @@ def joy_callback(joy_data):
     global toggle
     global init, turning, turning_complete, left_lane_turn, right_lane_turn
     global car, car_pos, car_orient
-    global prev_time, now_time
+    global prev_time, now_time, update_pose_prev_time, update_pose_now_time
     global prev_pos, now_pos
     global init_orient_list, init_pos_list
     global env_lines, env_pts
     global left_lane, right_lane, left_lane_pts, right_lane_pts
-    global car_x_off, car_y_off, car_ang_off
+    global car_x_off, car_y_off, car_ang_off, pred_distrib
     global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line, cam_pos_shift
     
     # RB
@@ -995,9 +1498,11 @@ def joy_callback(joy_data):
             car_orient = [1,0]
             visual_pub_car.publish("[%s, %s]" % (str(car_pos), str(car_orient)))
             car_x_off = car_y_off = car_ang_off = 0
+            pred_distrib = 0
 
             # Reset timer
             prev_time = now_time = rospy.get_time()
+            update_pose_prev_time = update_pose_now_time = 0
             
             # Reset position
             prev_pos = [1j,1j]
@@ -1015,23 +1520,36 @@ def joy_callback(joy_data):
 
             print 'turn off'
 
+def callback_imu(data):
+    # Under construction
+    global imu_lin_accel, imu_ang_vel
+    global imu_now_time, imu_prev_time
+    global imu_vel, imu_ang
+
+    imu_now_time = data.header.stamp.secs + float(data.header.stamp.nsecs)*1e-9
+    imu_lin_accel = data.linear_acceleration.x
+    imu_ang_vel = data.angular_velocity.z
+    if imu_prev_time != 0:
+        dt = imu_now_time - imu_prev_time
+        imu_vel += imu_lin_accel*dt
+        imu_ang += imu_ang_vel*dt
+
+def callback_param(data):
+    global driver_vel, driver_ang
+    driver_vel = data.velocity
+    driver_ang = data.angle
+    driver_vel = map_velocity(driver_vel)
+    driver_ang = map_angle(driver_ang)
+
+
 # Extract the camera data to update the orientation
 def callback_camera(string):
     global START
     global init
-    global car_pos, car_orient
-    global left_lane, right_lane
     global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line
     global turning, turning_complete
-    global cam_pos_shift
 
-    # The camera's position on the undistorted image frame, i.e. the bottom
-    O = [300, -625]
-
-    if START == 1 and init > 3 and turning == 0:
-
-        print 'left_lane: ', left_lane
-        print 'right_lane: ', right_lane
+    if START == 1 and init > 3:
 
         data = eval(string.data)
         cam_left_line = data[0]
@@ -1039,107 +1557,19 @@ def callback_camera(string):
         cam_mid_line = data[2]
         cam_mid_right_line = data[3]
         cam_right_line = data[4]
-        left_ang = mid_ang = right_ang = ang_off = 0
-        left_dist = right_dist = 0
-        counter = 0
 
-        print 'left line: ', cam_left_line
-        print 'right line: ', cam_right_line
-        print 'mid left line: ', cam_mid_left_line
-        print 'mid right line: ', cam_mid_right_line
-        print 'mid line: ', cam_mid_line
-
-        if turning_complete == 1:
-            turning_complete = 0
-            driver.velocity = 15.6
-            driver.angle = 0
-            drive_pub.publish(driver)
-            print 'slow down, updating the environment'
-            update_env()
-            update_probes()
-            left_lane, right_lane, left_lane_pts, right_lane_pts = get_left_right()
-            print 'update the left and right lane: ', left_lane, right_lane
-            driver.velocity = 18
-            driver.angle = 0
-            drive_pub.publish(driver)
-
-        if type(cam_left_line) != int and np.array(left_lane).tolist() != [0,0]:
-            p0 = cam_left_line[0]
-            p1 = cam_left_line[1]
-            p0 = undist_cam(p0)
-            p1 = undist_cam(p1)
-            vec = np.array(p1) - np.array(p0)
-            vec = align_vec(vec, np.array([0,1]))
-            left_lane = align_vec(np.array(left_lane), np.array(car_orient))
-            left_ang = find_ang(vec, left_lane)
-            print 'left angle: ', np.degrees(left_ang)
-
-            # Find the distance to the center
-
-            left_dist = abs(300 - p0[0])
-            left_dist = float(left_dist)*0.6/50
-            print 'left_dist: ', left_dist
-
-            counter += 1
-        if type(cam_right_line) != int and np.array(right_lane).tolist() != [0,0]:
-            p0 = cam_right_line[0]
-            p1 = cam_right_line[1]
-            p0 = undist_cam(p0)
-            p1 = undist_cam(p1)
-            vec = np.array(p0) - np.array(p1)
-            vec = align_vec(vec, np.array([0,1]))
-            right_lane = align_vec(np.array(right_lane), np.array(car_orient))
-            right_ang = find_ang(vec, right_lane)
-            print 'right_ang: ', np.degrees(right_ang)
-
-            # Find the distance to the center
-            right_dist = abs(300 - p1[0])
-            right_dist = float(right_dist)*0.6/50
-            print 'right_dist: ', right_dist
-
-            counter += 1
-        if counter != 0:
-            print 'counter: ', counter
-            ang_off = (left_ang + right_ang)/float(counter)
-            print '-------------------final ang offset: ', np.degrees(ang_off)
-
-            # Update the car's orientation
-            orient = [-np.sin(ang_off), np.cos(ang_off)]
-            print 'previous orientation: ', car_orient
-            car_orient = orient
-            print '-------------------camera updated orientation: ', car_orient
-
-            # Update the car's position shift
-            dist = right_dist - left_dist
-            print 'distance from middle: ', dist
-            # find the midpoint of the lanes
-            dist_vec = dist_mid_lane()
-            print 'vector to middle of the lane: ', dist_vec
-            # Find the vector orthogonal to the car's orientation
-            orient = np.array([car_orient[1],-car_orient[0]])
-            orient = dist*orient/np.linalg.norm(orient)
-            print 'orthogonal direction: ', orient
-            cam_pos_shift = dist_vec + orient
-            # TODO: tune the exact coefficients of each vector
-
-    elif turning != 0:
-        data = eval(string.data)
-        cam_left_line = data[0]
-        cam_mid_left_line = data[1]
-        cam_mid_line = data[2]
-        cam_mid_right_line = data[3]
-        cam_right_line = data[4]
+        if print_main == 1:
+            print 'left line: ', cam_left_line
+            print 'right line: ', cam_right_line
+            print 'mid left line: ', cam_mid_left_line
+            print 'mid right line: ', cam_mid_right_line
+            print 'mid line: ', cam_mid_line
 
 
 # Obtaining the car's pose
 def callback(odom):
-    global START
-    global init
-    global turning, turning_complete
-
-    global odom_pos
+    global START, odom_pos
     global car_pos, prev_pos
-    global car_orient
 
     if START == 1:
         odom_pos = [odom.pose.pose.position.x,odom.pose.pose.position.y]
@@ -1153,47 +1583,7 @@ def callback(odom):
             dist = np.linalg.norm(vec)
             if dist <= 0.75:
                 car_pos = odom_pos
-        elif turning == 0:
-            global cam_pos_shift
-            odom_pos = np.array(odom_pos) + offset*np.array(car_orient)
-            print '===========>hedge position: ', odom_pos
-            vec = odom_pos - np.array(car_pos)
-            dist = np.linalg.norm(vec)
-            if dist > 0.001:
-                print 'callback odom point distance: ', dist
-                vec = vec/float(dist)
-                if dist <= 1:
-                    if turning_complete == 0:
-                        try:
-                            print 'camera shift: ', cam_pos_shift
-                            car_pos = odom_pos + cam_pos_shift
-                            car_pos = car_pos.tolist()
-                        except:
-                            car_pos = odom_pos.tolist()
-                    else:
-                        car_pos = odom_pos.tolist()
-                    print '===========>car_pos updated: ', car_pos
-                    # ang = np.dot(vec, np.array(car_orient))/np.linalg.norm(car_orient)
-                    # ang = np.arccos(ang)
-                    # print 'new position ang: ', np.degrees(ang.tolist())
-                    # if (abs(ang) <= max_angle) or (abs(ang) >= (np.pi - max_angle)):
-                    #     car_pos = odom_pos.tolist()
-                    #     print 'car_pos updated: ', car_pos
-        # Turning stage
-        else:
-            odom_pos = np.array(odom_pos) + offset*np.array(car_orient)
-            dist = odom_pos - np.array(prev_pos)
-            dist = np.linalg.norm(dist)
-            print 'Turning, restrict update distance: ', dist
-            if dist < 1:
-                dist_2 = odom_pos - np.array(car_pos)
-                dist_2 = np.linalg.norm(dist_2)
-                if dist_2 > 0.001:
-                    scale = 1/(dist_2+1.0)
-                    print 'scaling factor for new position: ', scale
-                    car_pos = (1-scale)*np.array(car_pos)+scale*odom_pos
-                    car_pos = car_pos.tolist()
-                    print 'Updated car_pos: ', car_pos
+
 
 rospy.init_node('lane_driver', anonymous=True)
 
@@ -1213,6 +1603,13 @@ cam_pos_shift = []
 # Initialize turning parameter
 left_lane_turn = right_lane_turn = 0
 
+# Initialize control parameter
+driver_vel = driver_ang = 0
+imu_lin_accel = imu_ang_vel = imu_vel = 0
+imu_now_time = imu_prev_time = 0
+imu_vel = imu_ang = 0
+pred_distrib = 0
+
 # Initialize environment variables
 env_lines = []
 env_pts = tuple([])
@@ -1222,11 +1619,25 @@ cam_left_line = cam_right_line = cam_mid_line = cam_mid_left_line = cam_mid_righ
 num_cycles = 20
 rate = rospy.Rate(num_cycles)
 
+# Start new threads
+threads = []
+predict_thread = Predict()
+update_thread = Update()
+localize_thread = Localize()
+navigate_thread = Navigate()
+
+threads.append(predict_thread)
+threads.append(update_thread)
+threads.append(localize_thread)
+threads.append(navigate_thread)
+
 if __name__ == '__main__':
 
     rospy.Subscriber("joy", Joy, joy_callback)
     rospy.Subscriber('odometry/filtered', Odometry, callback)
     rospy.Subscriber('line_cnt/slope', String, callback_camera)
+    rospy.Subscriber('imu_transformed', Imu, callback_imu)
+    rospy.Subscriber("drive_param_fin", drive_param, callback_param)
 
     # Initialize the map
     map_path = '/home/antonio/catkin_ws/src/race/src/map/map.txt'
@@ -1234,9 +1645,17 @@ if __name__ == '__main__':
 
     # Initialize timer
     prev_time = now_time = rospy.get_time()
+    update_pose_prev_time = update_pose_now_time = 0
+
+    # predict_thread.start()
+    # update_thread.start()
+    # localize_thread.start()
+    # print 'Start running localization thread:'
+    # localize_thread.run()
+    # navigate_thread.start()
 
     while not rospy.is_shutdown():
-        visual_pub_car.publish("[%s, %s]" % (str(car_pos), str(car_orient)))
+        visual_pub_car.publish("[%s, %s, %s]" % (str(car_pos), str(car_orient), str(pred_distrib)))
         print 'car_orient: ', car_orient
         if START == 1:
             if init <= 3:
@@ -1261,7 +1680,9 @@ if __name__ == '__main__':
                     driver.angle = 0
                     drive_pub.publish(driver)
 
-                # navigate()
+                navigate()
+                if print_main == 1:
+                    print '------------------------- END NAVIGATE --------------------------'
             # Update timer
             now_time = rospy.get_time()
             # print 'time diff outside: ', now_time - prev_time

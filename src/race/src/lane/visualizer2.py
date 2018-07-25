@@ -64,6 +64,8 @@ front_probe = LineString([(0.0, 0.0), (front_probe_len+shift, 0.0)])
 turn_left_probe = LineString([(0.0, 0.0), (0.1+shift, 0.0101), (0.2+shift, 0.0417), (0.3+shift, 0.1), (0.4+shift, 0.2), (0.5+shift, 0.5)])
 turn_right_probe = LineString([(0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.0417), (0.3+shift, -0.1), (0.4+shift, -0.2), (0.5+shift, -0.5)])
 
+# Initialize the ellpitical distribution
+ell_distrib = 0
 
 # Map parameters that determine the size and orientation of the map
 p0 = [0.455, 4.408]
@@ -151,10 +153,14 @@ def plot_line(lines):
 def callback_car(string):
     global car_pos_new
     global car_orient_new
+    global ell_distrib
 
     data = eval(string.data)
     car_pos_new = data[0]
     car_orient_new = data[1]
+    # print 'data from car: ', data
+    # ell_distrib = data[2]
+    # print 'elliptical distribution: ', ell_distrib
 
 def update_pose_diff():
     global car, car_pos, car_pos_new, car_orient, car_orient_new
