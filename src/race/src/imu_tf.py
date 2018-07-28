@@ -20,29 +20,17 @@ def scale_linear_accel(x, y, z):
 	x_sc = scale*x
 	y_sc = scale*y
 	z_sc = scale*z
+	x_sc = x_sc - 0.1
+	y_sc = y_sc + 0.1
+	return x_sc, y_sc, z_sc
 
+def scale_ang_vel(x,y,z):
+	x_sc = x-0.02
+	y_sc = y-0.01
+	z_sc = z+0.02
 	return x_sc, y_sc, z_sc
 
 def callback_imu(imu):
-	global imu_new
-	imu_new = imu
-	imu_new.header.stamp = rospy.get_rostime()
-	imu_new.header.frame_id = "base_link"
-	imu_new.orientation.x = imu.orientation.y
-	imu_new.orientation.y = imu.orientation.x
-	imu_new.orientation.z = -1.0*imu.orientation.z
-	x = imu.linear_acceleration.y
-	y = imu.linear_acceleration.x
-	z = -1.0*imu.linear_acceleration.z
-	x,y,z = scale_linear_accel(x,y,z)
-	imu_new.linear_acceleration.x = x
-	imu_new.linear_acceleration.y = y
-	imu_new.linear_acceleration.z = z
-	imu_new.angular_velocity.x = imu.angular_velocity.y
-	imu_new.angular_velocity.y = imu.angular_velocity.x
-	imu_new.angular_velocity.z = -1.0*imu.angular_velocity.z
-
-def callback_imu_2(imu):
 	global imu_new
 	imu_new = imu
 	imu_new.header.stamp = rospy.get_rostime()
@@ -57,9 +45,13 @@ def callback_imu_2(imu):
 	imu_new.linear_acceleration.x = x
 	imu_new.linear_acceleration.y = y
 	imu_new.linear_acceleration.z = z
-	imu_new.angular_velocity.x = -1.0*imu.angular_velocity.y
-	imu_new.angular_velocity.y = -1.0*imu.angular_velocity.x
-	imu_new.angular_velocity.z = imu.angular_velocity.z
+	x = -1.0*imu.angular_velocity.y
+	y = -1.0*imu.angular_velocity.x
+	z = imu.angular_velocity.z
+	x,y,z = scale_ang_vel(x,y,z)
+	imu_new.angular_velocity.x = x
+	imu_new.angular_velocity.y = y
+	imu_new.angular_velocity.z = z
 
 if __name__ == '__main__':
     rospy.Subscriber(imu_topic, Imu, callback_imu)

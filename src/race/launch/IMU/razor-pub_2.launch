@@ -15,17 +15,5 @@
     <param name="use_mag" value="false"/>
     <remap from="imu/data_raw" to="imu_1/data_raw"/>
   </node> -->
-  <node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter_node_2" 
-    output="screen">
-    <param name="use_mag" value="false"/>
-    <remap from="imu/data_raw" to="imu_2/data_raw"/>
-    <remap from="imu/data" to="imu_2"/>
-  </node>
-  <!-- <node pkg="race" type="imu_tf.py" name="imu_tf_1" output="screen">
-  	<remap from="imu_topic" to="imu_1"/>
-  </node> -->
-  <node pkg="race" type="imu_tf_2.py" name="imu_tf_2" output="screen">
-  	<remap from="imu_topic" to="imu_2"/>
-    <!-- <remap from="imu_transformed" to="imu_transformed_2"/> -->
-  </node>
+  
 </launch>

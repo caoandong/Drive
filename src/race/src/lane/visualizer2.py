@@ -29,7 +29,7 @@ import matplotlib.animation as anim
 
 # Parameters of the car, unit in meters
 # Car represented as a shapely polygon
-car_length = 0.5
+car_length = 0.34
 car_width = 0.3
 offset = 0.13 # meters
 car = Polygon([(-car_length/2, car_width/2),(car_length/2, car_width/2),
@@ -49,7 +49,7 @@ FOV_pos = FOV_pos_new = [0,0]
 FOV_orient = FOV_orient_new = car_orient
 
 # Initialize probes
-side_probe_len = 0.6
+side_probe_len = 0.8
 front_probe_len = 1
 shift = 0.2
 probes = Polygon([(0.0, 0.0), (0.0, side_probe_len), (0.0, 0.0), (0.0, -1*side_probe_len),
@@ -65,11 +65,11 @@ turn_left_probe = LineString([(0.0, 0.0), (0.1+shift, 0.0101), (0.2+shift, 0.041
 turn_right_probe = LineString([(0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.0417), (0.3+shift, -0.1), (0.4+shift, -0.2), (0.5+shift, -0.5)])
 
 # Initialize the ellpitical distribution
-ell_distrib = 0
+ell_distrib = [[0,0],0,0,0]
 
 # Map parameters that determine the size and orientation of the map
-p0 = [0.455, 4.408]
-p1 = [2.30, 2.15]
+p0 = [3.75, 4.66]
+p1 = [1.26, 2.88]
 
 # Helper functions
 # Check cross product from vec1 to vec2
@@ -158,9 +158,11 @@ def callback_car(string):
     data = eval(string.data)
     car_pos_new = data[0]
     car_orient_new = data[1]
-    # print 'data from car: ', data
-    # ell_distrib = data[2]
-    # print 'elliptical distribution: ', ell_distrib
+    try:
+        ell_distrib = data[2]
+        # print 'elliptical distribution: ', ell_distrib
+    except:
+        pass
 
 def update_pose_diff():
     global car, car_pos, car_pos_new, car_orient, car_orient_new
@@ -170,13 +172,13 @@ def update_pose_diff():
     if abs(car_orient[0] - car_orient_new[0]) >= 0.00001 and abs(car_orient[1] - car_orient_new[1]) >= 0.00001:
         rotate = 1
         car_ang_off = np.dot(np.array(car_orient), np.array(car_orient_new))/(np.linalg.norm(car_orient)*np.linalg.norm(car_orient_new))   
-        print 'dot: ', car_ang_off
+        # print 'dot: ', car_ang_off
         car_ang_off = np.arccos(car_ang_off)
         cross = np.cross(np.array(car_orient), np.array(car_orient_new))
         if cross < 0:
             car_ang_off = -1*car_ang_off
         car_orient = car_orient_new
-        print 'angle offset: ', np.degrees(car_ang_off)
+        # print 'angle offset: ', np.degrees(car_ang_off)
 
     center = (car_pos[0], car_pos[1])
     car_x_off = car_pos_new[0] - car_pos[0]
@@ -217,6 +219,8 @@ def update_anim(num):
     global left_probe, right_probe
     global front_probe
     global turn_left_probe, turn_right_probe
+
+    global ell_distrib
 
     print 'input car_pos_new: ', car_pos_new
     print 'input car_orient_new: ', car_orient_new
@@ -275,6 +279,18 @@ def update_anim(num):
     x,y = turn_right_probe.coords.xy
     turn_right_probe_plot.set_data(x,y)
 
+    # Update ell
+    p = ell_distrib[0]
+    var_x = ell_distrib[1]
+    var_y = ell_distrib[2]
+    ang_off = ell_distrib[3]
+    ell = Point(p[0], p[1]).buffer(1)
+    ell = affinity.scale(ell, var_x, var_y)
+    ell = affinity.rotate(ell, ang_off, origin='center', use_radians=True)
+    x,y = ell.exterior.xy
+    ell_plot.set_data(x,y)
+    print 'ell: ', ell
+
     # Update FOV
     if show_FOV:
         FOV_pos_new = car_pos
@@ -294,7 +310,7 @@ def update_anim(num):
         x,y = FOV.exterior.xy
         FOV_plot.set_data(x,y)
 
-    return car_plot, FOV_plot, probe_plot, left_probe_plot, right_probe_plot, front_probe_plot, turn_left_probe_plot, turn_right_probe_plot
+    return car_plot, FOV_plot, probe_plot, left_probe_plot, right_probe_plot, front_probe_plot, turn_left_probe_plot, turn_right_probe_plot, ell_plot
 
 
 rospy.init_node('visualizer')
@@ -321,6 +337,8 @@ if __name__ == '__main__':
     turn_left_probe_plot, = ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
         linewidth=3, solid_capstyle='round')
     turn_right_probe_plot, = ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
+        linewidth=3, solid_capstyle='round')
+    ell_plot, = ax.plot([], [], color='r', alpha=0.5, fillstyle='full',
         linewidth=3, solid_capstyle='round')
 
     # Initialize the map

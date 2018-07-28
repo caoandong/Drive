@@ -1,15 +1,14 @@
 ## USB port
 port: /dev/ttyRazorIMU
 
-
 ##### Calibration ####
 ### accelerometer
-accel_x_min: -250.0
-accel_x_max: 250.0
-accel_y_min: -250.0
-accel_y_max: 250.0
-accel_z_min: -250.0
-accel_z_max: 250.0
+accel_x_min: -260.5
+accel_x_max: 255.0
+accel_y_min: -265.0
+accel_y_max: 260.0
+accel_z_min: -255.0
+accel_z_max: 262.57
 
 ### magnetometer
 # standard calibration

@@ -32,6 +32,7 @@ import matplotlib.animation as anim
 # else:
 # pick another drive param
 
+
 drive_pub = rospy.Publisher('lane_driver', drive_param, queue_size=1)
 
 # A list of things I wish to visualize:
@@ -78,6 +79,144 @@ line_slope = [12345.6789,12345.6789,12345.6789]
 show_FOV = 0
 show_pred_car = 0
 
+# Predict the distribution of pose (position and orientation)
+# dt later from driver and IMU data
+def predict_pose_distrib():
+    # Use driver and IMU data to find position reletive to the center line
+    # Predict the motion time dt later
+    # Make a normal distribution in the predicted odom frame
+    # Transform the predicted odom frame to the world frame
+    # Given a new coordinate from GPS, find the reliability of that coord
+
+    global car_pos, car_orient
+    global driver, turning, pred_distrib, offset
+    global update_pose_prev_time, update_pose_now_time, print_local
+
+    dt = 0.002 # Set this manually for now
+    localize_debug.publish("turning: %d" % turning)
+    localize_debug.publish("dt: %f" % dt)
+    if print_local == 1:
+        print 'dt: ', dt
+        print 'Start predicting the pose to find the distribution'
+
+    speed = fuse_speed()
+    ang = fuse_angle()
+    if print_local == 1:
+        print 'predicted speed: ', speed
+        print 'predicted angle: ', ang
+
+    x = car_pos[0]
+    y = car_pos[1]
+    p = np.array([x,y])
+    speed = abs(speed)
+
+    car_ang = find_ang([1,0], car_orient)
+    if print_local == 1:
+        print 'car angle wrt +x-axis: ', np.degrees(car_ang)
+
+    orient = np.array(car_orient)/np.linalg.norm(car_orient)
+
+    # localize_debug.publish("check turning: %d | angle: %f" % (turning, np.degrees(ang)))
+
+    if (turning != 0) and (abs(ang) > 0.001):
+        p = p.reshape([2,1])
+        orient = orient.reshape([2,1])
+
+        r = car_length/(2*np.tan(ang))
+        r = abs(r)
+        if print_local == 1:
+            print 'dist to O: ', r
+
+        O_x = x+r*np.sin(car_ang)
+        O_y = y-r*np.cos(car_ang)
+        O = [O_x, O_y]
+        if print_local == 1:
+            print 'O: ', O
+
+        O = np.array(O)
+        O = O.reshape([2,1])
+
+        p = p - O
+
+        if print_local == 1:
+            print 'speed: ', speed
+
+        # ang_vec = np.array([1, np.tan(ang)])
+        # cross = check_cross(np.array(car_orient), ang_vec)
+        # if cross >= 0:
+        if turning == 2:
+            localize_debug.publish("Anti-clockwise")
+            if print_local == 1:
+                print 'Anti-clockwise'
+            phi = speed*dt/r
+        elif turning == 3:
+            localize_debug.publish("clockwise")
+            if print_local == 1:
+                print 'Clockwise'
+            phi = -1*speed*dt/r
+
+        localize_debug.publish("Rotation phi: %f" % np.degrees(phi))
+        
+        if print_local == 1:
+            print 'rotation: ', np.degrees(phi)
+
+        R = np.array([[np.cos(phi), -np.sin(phi)],[np.sin(phi), np.cos(phi)]])
+        p = np.matmul(R, p)
+        p = p + O
+        p = p.reshape([2])
+        p = p.tolist()
+
+        orient = np.matmul(R, orient)
+        orient = orient.reshape([2])
+        car_orient = orient.tolist()
+        localize_debug.publish('updated orientation: %s' % str(car_orient))
+        
+    else:
+        p += speed*orient*dt + offset*orient
+        p = p.tolist()
+        orient = orient.tolist()
+
+    if print_local == 1:
+        print 'predicted position: ', p
+
+    dist = np.linalg.norm(np.array(p)-np.array(car_pos))
+    
+    if print_local == 1:
+        print 'distance to original position: ', dist
+        
+    # x distribution is the horizontal distribution of angles
+    x0 = 0.3
+    x1 = 0.3*(1-x0)
+    x2 = (1-x0)*(1+abs(speed))
+    x3 = 5*(1-x0)
+    var_x = x0*dist + x1*abs(speed) + x2*abs(ang) + x3*dt 
+
+    # y distribution is the verticle distribution of distances
+    y0 = 0.3
+    y1 = 1
+    y2 = 0.7
+    y3 = 5
+    var_y = y0*dist + y1*abs(speed) + y2*abs(ang) + y3*dt
+    if print_local == 1:
+        print 'var_x: ', var_x
+        print 'var_y: ', var_y
+
+    ang_off = find_ang([0,1], orient)
+    pred_distrib = [p, var_x, var_y, ang_off]
+
+    ell = Point(p[0], p[1]).buffer(1)
+    ell = affinity.scale(ell, var_x, var_y)
+    ell = affinity.rotate(ell, ang_off, origin='center', use_radians=True)
+
+    localize_debug.publish('speed: %s | angle: %s | pred_distribution_pos: %s | pred_orient_wrt_y: %s | var_x: %s | var_y: %s' 
+                            % (str(speed), str(np.degrees(ang)), str(p), str(np.degrees(ang_off)), str(var_x), str(var_y)))
+
+    global imu_vel, imu_ang_vel
+    pred_speed_0 = imu_vel
+    pred_speed_1 = car_length*imu_ang_vel/np.tan(ang)    
+    localize_debug.publish('imu integrated speed: %f | imu predicted speed: %f' % (pred_speed_0, pred_speed_1))
+    return ell
+
 def undistort_slope(slope):
     print 'input slope: ', slope
     M = np.array([[-0.24825365335095023, -1.3835463057733923, 360.9934788630403],
@@ -102,6 +241,91 @@ def undistort_slope(slope):
     slope_new = slope_vec[1]/slope_vec[0]
     print 'slope_new: ', slope_new
     return slope_new
+
+# def get_left_right():
+#     global car_orient
+#     global car_pos
+
+#     global left_probe
+#     global right_probe
+
+#     left_lines = left_line = []
+#     right_lines = right_line = []
+#     left_lines_pts = []
+#     right_lines_pts = []
+#     left_line_pts = []
+#     right_line_pts = []
+
+#     for line in env_lines:
+#         x0, x1 = line.xy[0]
+#         y0, y1 = line.xy[1]
+#         vec = np.array([x1, y1]) - np.array([x0, y0])
+#         vec = vec/(np.linalg.norm(vec))
+
+#         if left_probe.intersects(line):
+#             left_lines.append(vec)
+#             left_lines_pts.append([[x0,y0],[x1,y1]])
+#             if print_main == 1:
+#                 print 'found a left line: ', line
+
+#         elif right_probe.intersects(line):
+#             right_lines.append(vec)
+#             right_lines_pts.append([[x0,y0],[x1,y1]])
+#             if print_main == 1:
+#                 print 'found a right line: ', line
+
+#     dot_max = -10
+#     num_left = len(left_lines)
+#     num_right = len(right_lines)
+
+#     if print_main == 1:
+#         print 'right: ', right_lines_pts
+
+#     if num_left > 1:
+#         for i in range(num_left):
+#             line_vec = left_lines[i]
+#             dot_orient = np.dot(line_vec, car_orient)/(float(np.linalg.norm(car_orient)))
+#             if dot_orient > dot_max:
+#                 if print_main == 1:
+#                     print 'found a better left line: ', line_vec
+#                 dot_max = dot_orient
+#                 left_line = line_vec
+#                 left_line_pts = left_lines_pts[i]
+#     elif num_left == 1:
+#         left_line = left_lines[0]
+#         left_line_pts = left_lines_pts[0]
+#     else:
+#         left_line = left_line_pts = [0,0]
+
+#     if num_right > 1:
+#         for i in range(num_right):
+#             line_vec = right_lines[i]
+#             dot_orient = np.dot(line_vec, car_orient)/(float(np.linalg.norm(car_orient)))
+#             if dot_orient > dot_max:
+#                 if print_main == 1:
+#                     print 'found a better right line: ', line_vec
+#                 dot_max = dot_orient
+#                 right_line = line_vec
+#                 right_line_pts = right_lines_pts[i]
+#     elif num_right == 1:
+#         right_line = right_lines[0]
+#         right_line_pts = right_lines_pts[0]
+#     else:
+#         if num_left != 0:
+#             right_line = left_line
+#             right_line_pts = left_line_pts
+#         else:
+#             right_line = right_line_pts = [0,0]
+
+#     if num_left == 0 and num_right != 0:
+#         left_line = right_line
+#         left_line_pts = right_line_pts
+
+#     if print_main == 1:
+#         print 'left_lane_pts: ', left_line_pts
+#         print 'right_lane_pts: ', right_line_pts
+
+#     return left_line, right_line, left_line_pts, right_line_pts
 
 def find_orient():
     global car_pos
