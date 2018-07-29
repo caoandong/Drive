@@ -79,6 +79,23 @@ line_slope = [12345.6789,12345.6789,12345.6789]
 show_FOV = 0
 show_pred_car = 0
 
+if check_intersection() == 1:
+        # Near an intersection
+        # dot product check
+        pt = find_front_pt_in_line()
+    elif check_intersection() == 0:
+        # Not near an intersection
+        # distance check
+        for p in right_lane_pts:
+            dist = np.array(p) - np.array(car_pos)
+            dist = np.linalg.norm(dist)
+            if dist < dist_min:
+                dist_min = dist
+                pt = p
+        if dist_min > 0.6:
+            update_debug.publish("pred point too far, try dot product")
+            pt = find_front_pt_in_line()
+
 # Predict the distribution of pose (position and orientation)
 # dt later from driver and IMU data
 def predict_pose_distrib():
