@@ -13,7 +13,7 @@ DIST_TOPIC = "range"
 class DecaWaveTag:
 
     def __init__(self):
-        port = rospy.get_param('~port', '/dev/ttyACM0')
+        port = rospy.get_param('~port', '/dev/ttyACM1')
         baud = rospy.get_param('~baud', 115200)
         # self.tag_names = rospy.get_param("tag_names")
         self.offsets = rospy.get_param("offsets", [0,0,0,0,0])
@@ -79,7 +79,18 @@ class DecaWaveTag:
             print 'quality factor: ', q
             return pos, q
         except:
-            pass
+            try:
+                pos = eval(data[-1].split("POS,")[-1])
+                x = pos[0]
+                y = pos[1]
+                z = pos[2]
+                q = pos[3]
+                pos = [x,y,z]
+                print 'my position: ', [x,y,z]
+                print 'quality factor: ', q
+                return pos, q
+            except:
+                pass
 
 
 

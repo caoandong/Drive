@@ -49,7 +49,7 @@ FOV_pos = FOV_pos_new = [0,0]
 FOV_orient = FOV_orient_new = car_orient
 
 # Initialize probes
-side_probe_len = 0.8
+side_probe_len = 0.7
 front_probe_len = 1
 shift = 0.2
 probes = Polygon([(0.0, 0.0), (0.0, side_probe_len), (0.0, 0.0), (0.0, -1*side_probe_len),
@@ -58,8 +58,10 @@ probes = Polygon([(0.0, 0.0), (0.0, side_probe_len), (0.0, 0.0), (0.0, -1*side_p
                  (0.1+shift, 0.0101), (0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.0417), (0.3+shift, -0.1), 
                  (0.4+shift, -0.2), (0.5+shift, -0.5), (0.4+shift, -0.2), (0.3+shift, -0.1), (0.2+shift, -0.0417), (0.1+shift, -0.0101), (0.0, 0.0)])
 
-left_probe = LineString([(0.0, 0.0), (0.0, side_probe_len)])
-right_probe = LineString([(0.0, 0.0), (0.0, -1*side_probe_len)])
+# left_probe = LineString([(0.0, 0.0), (0.0, side_probe_len)])
+# right_probe = LineString([(0.0, 0.0), (0.0, -1*side_probe_len)])
+left_probe = LineString([(0.0, 0.0), (side_probe_len/2.0, np.sqrt(3)/2*side_probe_len), (0, side_probe_len), (-0.5*side_probe_len, np.sqrt(3)/2*side_probe_len), (0.0, 0.0)])
+right_probe = LineString([(0.0, 0.0), (side_probe_len/2.0, -1*np.sqrt(3)/2*side_probe_len), (0, -1*side_probe_len), (-0.5*side_probe_len, -1*np.sqrt(3)/2*side_probe_len), (0.0, 0.0)])
 front_probe = LineString([(0.0, 0.0), (front_probe_len+shift, 0.0)])
 turn_left_probe = LineString([(0.0, 0.0), (0.1+shift, 0.0101), (0.2+shift, 0.0417), (0.3+shift, 0.1), (0.4+shift, 0.2), (0.5+shift, 0.5)])
 turn_right_probe = LineString([(0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.0417), (0.3+shift, -0.1), (0.4+shift, -0.2), (0.5+shift, -0.5)])

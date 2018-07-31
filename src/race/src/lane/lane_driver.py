@@ -96,6 +96,214 @@ if check_intersection() == 1:
             update_debug.publish("pred point too far, try dot product")
             pt = find_front_pt_in_line()
 
+
+    if left_lane_turn == 1:
+        # Rotate the car_orient counter-clockwsie by 90 degrees
+        orient = [-1*car_orient[1], car_orient[0]]
+        test_probe = np.array(left_lane) + np.array(orient)
+        test_probe = test_probe/np.linalg.norm(test_probe)
+        test_probe = np.array(pt) + test_probe
+        test_probe = tuple(test_probe.tolist())
+        test_probe = LineString([(pt[0], pt[1]), test_probe])
+        update_debug.publish('left test_probe: %s' % str(test_probe))
+    elif left_lane_turn == 0:
+        # Rotate the car_orient clockwsie by 90 degrees
+        orient = [car_orient[1], -1*car_orient[0]]
+        orient = np.array(orient)/np.linalg.norm(orient)
+        pt1 = np.array(pt) + orient
+        orient = -1*np.array(car_orient)
+        orient = np.array(orient)/np.linalg.norm(orient)
+        pt2 = pt1 + orient
+        pt1 = tuple(pt1.tolist())
+        pt2 = tuple(pt2.tolist())
+        test_probe = LineString([(pt[0], pt[1]), pt1, pt2])
+        update_debug.publish('left test_probe: %s' % str(test_probe))
+
+    # Find the left and right lines
+    pred_left_lane = 0
+    pred_right_lane = 0
+    pt = Point(tuple(pt))
+    # TODO: expand env_lines to contain all lines within a sphere of the car
+    for l in line_map:
+        x0, x1 = l.xy[0]
+        y0, y1 = l.xy[1]
+        if set(((x0, y0),(x1, y1))) == set((tuple(left_lane_pts[0]), tuple(left_lane_pts[1]))):
+            continue
+        if l.contains(pt):
+            pred_left_lane = l
+            update_debug.publish('pred_left_lane: %s' % str(pred_left_lane))
+        elif (not l.contains(pt)) and (test_probe.intersects(l)):
+            pred_right_lane = l
+            update_debug.publish('pred_right_lane: %s' % str(pred_right_lane))
+    if type(pred_left_lane) == int or type(pred_right_lane) == int:
+        update_debug.publish("can't find left/right lines")
+        return 0
+    left_lane_predict = []
+    left_lane_predict.append(pred_left_lane)
+    left_lane_predict.append(pred_right_lane)
+    update_debug.publish('left_lane_predict: %s' % str(left_lane_predict))
+
+def predict_left_turn(pt):
+    global env_lines, left_lane_pts, right_lane_pts, car_pos, car_orient
+    ball = Point(pt[0], pt[1]).buffer(1)
+    line_list = []
+    left_right_set = set([(tuple(left_lane_pts[0]), tuple(left_lane_pts[1])), (tuple(right_lane_pts[0]), tuple(right_lane_pts[1]))])
+    p = Point(pt[0],pt[1])
+    left_lane = 0
+    right_lane = 0
+    for l in env_lines:
+        if ball.intersects(l):
+            x0, x1 = l.xy[0]
+            y0, y1 = l.xy[1]
+            if bool(set([((x0, y0),(x1, y1))]).intersection(left_right_set)):
+                continue
+            else:
+                line_list.append(l)
+    num_line = len(line_list)
+    right_line_list = []
+    left_vec = []
+    if num_line <= 1:
+        return [0,0]
+    for l in line_list:
+        x0, x1 = l.xy[0]
+        y0, y1 = l.xy[1]
+        p0 = [x0, y0]
+        p1 = [x1, y1]
+        if pt == p0 or pt == p1:
+            left_lane = l
+            left_vec = np.array(p1) - np.array(p0)
+            line_list.remove(l)
+            continue
+        dist0 = np.array(p0) - np.array(car_pos)
+        dist1 = np.array(p1) - np.array(car_pos)
+        check0 = check_cross(np.array(car_orient), dist0)
+        check1 = check_cross(np.array(car_orient), dist1)
+        if check0 > 0 or check1 > 0:
+            right_line_list.append(l)
+            continue
+    num_line = len(right_line_list)
+    if num_line <= 0:
+        return [left_lane, 0]
+    elif num_line == 1:
+        right_lane = right_line_list[0]
+    elif num_line > 1:
+        for l in right_line_list:
+            x0, x1 = l.xy[0]
+            y0, y1 = l.xy[1]
+            p0 = [x0, y0]
+            p1 = [x1, y1]
+            vec = np.array(p1) - np.array(p0)
+            dot = np.dot(left_vec, vec)
+            if abs(abs(dot)-1) < 0.01:
+                right_lane = l
+                break
+    return [left_lane, right_lane]
+
+def check_right_turn():
+    global left_lane, right_lane, left_lane_pts, right_lane_pts
+    global right_lane_turn
+    global car_pos
+    pt = [0,0]
+    dist_min = 99999
+    # Check left
+    # Find the point closest to the car_pos
+    # Make sure to align the left and right lanes before turning
+
+    # Depending on whether or not you are in an intersection
+    # Use either distance check or dot product check
+    pt = find_front_pt_in_line(right_lane_pts)
+    
+    # Rotate the car_orient clockwsie by 90 degrees
+    orient = [car_orient[1], -1*car_orient[0]]
+    test_probe = np.array(right_lane) + np.array(orient)
+    test_probe = test_probe/np.linalg.norm(test_probe)
+    test_probe = np.array(pt) + test_probe
+    test_probe = tuple(test_probe)
+    test_probe = LineString([(pt[0], pt[1]), test_probe])
+    update_debug.publish('right test_probe: %s' % str(test_probe))
+
+    # Find the left and right lines
+    pred_left_lane = 0
+    pred_right_lane = 0
+    pt = Point(tuple(pt))
+    # TODO: expand env_lines to contain all lines within a sphere of the car
+    for l in line_map:
+        x0, x1 = l.xy[0]
+        y0, y1 = l.xy[1]
+        if set(((x0, y0),(x1, y1))) == set((tuple(left_lane_pts[0]), tuple(left_lane_pts[1]))):
+            continue
+        if l.contains(pt):
+            pred_left_lane = l
+        elif (not l.contains(pt)) and (test_probe.intersects(l)):
+            pred_right_lane = l
+    if type(pred_left_lane) == int or type(pred_right_lane) == int:
+        update_debug.publish("can't find left/right lines")
+        return 0
+    right_lane_predict = []
+    right_lane_predict.append(pred_left_lane)
+    right_lane_predict.append(pred_right_lane)
+    return right_lane_predict
+
+def check_left_turn():
+    global left_lane, left_lane_pts
+    global left_lane_turn
+    global car_pos
+    pt = [0,0]
+    dist_min = 99999
+    # Check left
+    # Find the point closest to the car_pos
+    # Make sure to align the left and right lanes before turning
+
+    # Depending on whether or not you are in an intersection
+    # Use either distance check or dot product check
+    pt = find_front_pt_in_line(left_lane_pts)
+    left_lane_predict = predict_left_turn()
+    return left_lane_predict
+
+# Predict what you are going to see after a 90 degree turn
+def predict_left_right(left_lane_predict, right_lane_predict):
+    global left_lane, right_lane, left_lane_pts, right_lane_pts
+    global car_pos, car_orient
+    global line_map, lane_predict
+    global turning, turning_complete, update_toggle
+
+    if turning == 0 and update_toggle[3] == 1:
+        if type(left_lane) == list and type(left_lane_pts) == list:
+            update_debug.publish("start predicting for left")
+            left_lane_predict = check_left_turn()
+            if type(left_lane_predict) != int:
+                left_check = check_left_right_pred(left_lane_predict[0], left_lane_predict[1])
+                update_debug.publish('predict left check: %d' % left_check)
+                if left_check <= 1:
+                    update_toggle[3] = 1
+                else:
+                    update_toggle[3] = 0
+            else:
+                lane_predict[2] = 1
+        else:
+            lane_predict[2] = 1
+        update_debug.publish("right_lane type: %s | right_lane_pts type: %s" % (str(type(right_lane)), str(type(right_lane_pts))))
+        if type(right_lane) == list and type(right_lane_pts) == list:
+            update_debug.publish("start predicting for right")
+            if lane_predict[3] == 1:
+                right_lane_predict = check_right_turn()
+                if type(right_lane_predict) != int:
+                    right_check = check_left_right_pred(right_lane_predict[0], right_lane_predict[1])
+                    update_debug.publish('predict right check: %d' % right_check)
+                    if right_check <= 1:
+                        lane_predict[3] = 1
+                    else:
+                        lane_predict[1] = right_lane_predict
+                        lane_predict[3] = 0
+                else:
+                    lane_predict[3] = 1
+        else:
+            lane_predict[3] = 1
+    if lane_predict[2] == 0 and lane_predict[3] == 0:
+        update_toggle[3] = 0
+
+    update_debug.publish('lane_predict: %s' % str(lane_predict))
+
 # Predict the distribution of pose (position and orientation)
 # dt later from driver and IMU data
 def predict_pose_distrib():
