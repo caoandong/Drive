@@ -47,7 +47,7 @@ localize_debug = rospy.Publisher('lane_driver/localize_debug', String, queue_siz
 # Parameters of the car, unit in meters
 # Car represented as a shapely polygon
 car_length = 0.34
-car_width = 0.3
+car_width = 0.2
 offset = 0.13 # meters
 max_angle = 0.431139 # in radian
 
@@ -143,9 +143,9 @@ class Update (threading.Thread):
                 if turning_complete != 0:
                     # check the IMU to see if the car has turned much
                     imu_ang_diff = abs(imu_ang - imu_ang_prev)
-                    if abs(imu_ang_diff%(2*np.pi) - np.pi/2) < 0.5:
+                    if imu_ang_diff > np.radians(80):
                         print '-------------------TURNING COMPLETED-----------------'
-                        update_toggle = [1,1,1,1]
+                        update_toggle = [1,1,1]
                         turning_complete_update()
                         imu_ang_prev = 1j
                         # Reset error
@@ -207,13 +207,15 @@ class Localize (threading.Thread):
                     car_pos = np.array(odom_pos) + w0*offset*orient + w1*np.array(cam_pos_shift)
                     car_pos = car_pos.tolist()
                     localize_debug.publish('car_pos updated: %s' % str(car_pos))
-                    # car_orient_pred = predict_orient(car_orient)
-                    # localize_debug.publish('car_orient_pred: %s' % str(car_orient_pred))
+                    # Update orientation
+                    # imu_orient = rotate_by_rad(car_orient, imu_ang_vel*dt_pred)
+                    # localize_debug.publish('imu orient: %s' % str(imu_orient))
+                    car_orient_pred = predict_orient(car_orient)
+                    localize_debug.publish('car_orient_pred: %s' % str(car_orient_pred))
                     # check = check_orient_pred(car_orient_pred)
                     # car_orient = (1-check)*np.array(car_orient) + check*np.array(car_orient_pred)
-                    # car_orient = car_orient.tolist()
-                    car_orient = rotate_by_rad(car_orient, imu_ang_vel*dt_pred)
-                    localize_debug.publish('car_orient weighted: %s' % str(car_orient))
+                    car_orient = check_orient_pred(car_orient_pred)
+                    car_orient = car_orient.tolist()
                     odom_pos_prev = odom_pos
                 if type(car_orient) == np.ndarray:
                     car_orient = car_orient.tolist()
@@ -371,7 +373,6 @@ def get_left_right():
 
         num_left = len(left_lines_pts)
         num_right = len(right_lines_pts)
-
         update_debug.publish('num_left: %d | num_right: %d ' % (num_left, num_right))
 
         if num_left != 0 and num_right != 0:
@@ -894,7 +895,7 @@ def find_dist_lines(line_pts1, line_pts2):
 # Make sure that the left and right lane makes sense
 def check_lane_predict(left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp):
     global car_pos
-    global turning
+    global turning, update_toggle
 
     if turning == 0:
         # Check if lane_predict is correct:
@@ -918,6 +919,8 @@ def check_lane_predict(left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_l
         right_line = LineString([tuple(right_lane_pts_tmp[0]), tuple(right_lane_pts_tmp[1])])
         ball = Point(car_pos[0], car_pos[1]).buffer(0.6)
         if ball.intersects(left_line) or ball.intersects(right_line):
+            # Don't have to update left right until next turning
+            update_toggle[1] == 0
             return 1
         else:
             return 0
@@ -938,7 +941,7 @@ def get_left_right_vec(lanes):
 
 def update_left_right(turn):
     global left_lane, right_lane, left_lane_pts, right_lane_pts
-    global lane_predict
+    global lane_predict, update_toggle
 
     if len(lane_predict[0][0]) == 2 and len(lane_predict[0][1]) == 2 and len(lane_predict[1][0]) == 2 and len(lane_predict[1][1]) == 2:
         if turn == 2:
@@ -1202,10 +1205,13 @@ def check_orient_pred(orient_pred):
     localize_debug.publish('-------check_orient_pred-------')
     pred_ang_diff = find_ang(np.array(car_orient), np.array(orient_pred))
     pred_ang_vel = pred_ang_diff/(dt_pred)
+    imu_orient = rotate_by_rad(car_orient, imu_ang_vel*dt_pred)
     check = abs(imu_ang_vel - pred_ang_vel)
     check = gauss_distrib(check, 1/(2*np.pi))
-    localize_debug.publish('pred_ang_diff: %f | pred_ang_vel: %f | imu_ang_vel: %f | check: %f' % ( pred_ang_diff, pred_ang_vel, imu_ang_vel, check))
-    return check
+    orient_ret = check*np.array(orient_pred) + (1-check)*np.array(imu_orient)
+    localize_debug.publish('orient_ret: %s | orient_pred: %s | imu_orient: %s | pred_ang_diff: %f | pred_ang_vel: %f | imu_ang_vel: %f | check: %f' 
+        % ( str(orient_ret), str(orient_pred), str(imu_orient), np.degrees(pred_ang_diff), pred_ang_vel, imu_ang_vel, check))
+    return orient_ret
 
 # Update the car's position and orientation based on camera images
 def cam_correct_pose():
@@ -1277,7 +1283,7 @@ def cam_correct_pose():
                 update_debug.publish('previous orientation: %s | camera updated orientation: %s' % ( str(car_orient_prev), str(car_orient)))
             else:
                 # There must be some issues, update everything
-                update_toggle = [1,1,1,1]
+                update_toggle = [1,1,1]
 
             # Update the car's position shift
             if counter == 2:
@@ -1941,47 +1947,100 @@ def navigate():
                 driver.angle = 100
                 drive_pub.publish(driver)
         # Check whether or not to stop turning
-        if type(cam_left_line) == list:
-            print 'Going forward ?'
-            print 'The camera says: ', cam_left_line, cam_right_line
-            # check the slope of the undistorted left and right line
-            if print_main == 1:
-                print 'can see left line'
-            p0 = cam_left_line[0]
-            p1 = cam_left_line[1]
-            p0 = undist_cam(p0)
-            p1 = undist_cam(p1)
-            vec = np.array(p1) - np.array(p0)
-            dot = np.dot(vec, np.array([0,1]))/(np.linalg.norm(vec))
-            if print_main == 1:
-                print 'dot of left vec: ', dot
-            if abs(dot) > 0.85:
-                print 'Go ahead'
-                driver.velocity = 16
-                driver.angle = 0
-                drive_pub.publish(driver)
-                turning_complete = turning
-                turning = 0
+        # Check if car_orient is aligned with lane_predict
+        print 'Going forward ?'
+        if turning == 2:
+            try:
+                if len(lane_predict[0][0]) == 2 and len(lane_predict[0][1]) == 2:
+                    left_lane = lane_predict[1][0]
+                    left_lane_vec = np.array(left_lane[1]) - np.array(left_lane[0])
+                    left_lane_vec = left_lane_vec/np.linalg.norm(left_lane_vec)
+                    dot = np.dot(left_lane_vec, np.array(car_orient))
+                    if abs(abs(dot)-1) < 0.15:
+                        print 'Go ahead'
+                        driver.velocity = 16
+                        driver.angle = 0
+                        drive_pub.publish(driver)
+                        turning_complete = turning
+                        turning = 0
+                        return
+            except:
+                pass
+        if turning == 3:
+            try:
+                if len(lane_predict[1][0]) == 2 and len(lane_predict[1][1]) == 2:
+                    left_lane = lane_predict[1][0]
+                    left_lane_vec = np.array(left_lane[1]) - np.array(left_lane[0])
+                    left_lane_vec = left_lane_vec/np.linalg.norm(left_lane_vec)
+                    dot = np.dot(left_lane_vec, np.array(car_orient))
+                    if abs(abs(dot)-1) < 0.15:
+                        print 'Go ahead'
+                        driver.velocity = 16
+                        driver.angle = 0
+                        drive_pub.publish(driver)
+                        turning_complete = turning
+                        turning = 0
+                        return
+            except:
+                pass
+
+        # Check if front probe intersects any lane
+        for line in env_lines:
+            if front_probe.intersects(line):
+                if turning == 2:
+                    print 'Keep tuirning left'
+                    driver.velocity = 20
+                    driver.angle = -100
+                    drive_pub.publish(driver)
+                if turning == 3:
+                    print 'Keep turning right'
+                    driver.velocity = 20
+                    driver.angle = 100
+                    drive_pub.publish(driver)
                 return
-        if type(cam_right_line) == list:
-            if print_main == 1:
-                print 'can see right line'
-            p0 = cam_right_line[0]
-            p1 = cam_right_line[1]
-            p0 = undist_cam(p0)
-            p1 = undist_cam(p1)
-            vec = np.array(p1) - np.array(p0)
-            dot = np.dot(vec, np.array([0,1]))/(np.linalg.norm(vec))
-            if print_main == 1:
-                print 'dot of right vec: ', dot
-            if abs(dot) > 0.85:
-                print 'Go ahead'
-                driver.velocity = 16
-                driver.angle = 0
-                drive_pub.publish(driver)
-                turning_complete = turning
-                turning = 0
-                return
+        
+        # Check if seeing any middle line
+        if type(cam_mid_line) == int:
+            if type(cam_left_line) == list:
+                print 'The camera says: ', cam_left_line, cam_right_line
+                # check the slope of the undistorted left and right line
+                if print_main == 1:
+                    print 'can see left line'
+                p0 = cam_left_line[0]
+                p1 = cam_left_line[1]
+                p0 = undist_cam(p0)
+                p1 = undist_cam(p1)
+                vec = np.array(p1) - np.array(p0)
+                dot = np.dot(vec, np.array([0,1]))/(np.linalg.norm(vec))
+                if print_main == 1:
+                    print 'dot of left vec: ', dot
+                if abs(dot) > 0.85:
+                    print 'Go ahead'
+                    driver.velocity = 16
+                    driver.angle = 0
+                    drive_pub.publish(driver)
+                    turning_complete = turning
+                    turning = 0
+                    return
+            if type(cam_right_line) == list:
+                if print_main == 1:
+                    print 'can see right line'
+                p0 = cam_right_line[0]
+                p1 = cam_right_line[1]
+                p0 = undist_cam(p0)
+                p1 = undist_cam(p1)
+                vec = np.array(p1) - np.array(p0)
+                dot = np.dot(vec, np.array([0,1]))/(np.linalg.norm(vec))
+                if print_main == 1:
+                    print 'dot of right vec: ', dot
+                if abs(dot) > 0.85:
+                    print 'Go ahead'
+                    driver.velocity = 16
+                    driver.angle = 0
+                    drive_pub.publish(driver)
+                    turning_complete = turning
+                    turning = 0
+                    return
 
 # Callback functions
 
@@ -2087,7 +2146,7 @@ def callback_imu(data):
     global imu_vel, imu_ang
     global imu_orient
     global car_pos, car_orient
-    global START, init, dt_pred
+    global START, init
     # IMU angle is in the base frame
     # IMU velocity is in the base frame
 
@@ -2104,9 +2163,9 @@ def callback_imu(data):
         imu_ang_vel = -1*data.angular_velocity.z
         if imu_prev_time != 0:
             dt = imu_now_time - imu_prev_time
-            imu_vel = np.array(imu_vel) + np.array(imu_lin_accel)*dt_pred
+            imu_vel = np.array(imu_vel) + np.array(imu_lin_accel)*dt
             imu_vel = imu_vel.tolist()
-            imu_ang += imu_ang_vel*dt_pred
+            imu_ang += imu_ang_vel*dt
             localize_debug.publish('imu_lin_accel %s ; imu_ang_vel: %f' % (str(imu_lin_accel), imu_ang_vel))
             localize_debug.publish('imu_vel integrated: %s ; imu_ang integrated: %f' % (str(imu_vel), imu_ang))
 
@@ -2255,7 +2314,7 @@ update_toggle = [1,1,1]
 
 num_cycles = 20
 rate = rospy.Rate(num_cycles)
-dt_pred = 0.18 # Set this manually for now
+dt_pred = 0.2 # Set this manually for now
 
 # Start new threads
 threads = []

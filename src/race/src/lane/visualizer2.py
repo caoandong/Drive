@@ -30,7 +30,7 @@ import matplotlib.animation as anim
 # Parameters of the car, unit in meters
 # Car represented as a shapely polygon
 car_length = 0.34
-car_width = 0.3
+car_width = 0.2
 offset = 0.13 # meters
 car = Polygon([(-car_length/2, car_width/2),(car_length/2, car_width/2),
                        (car_length/2, -car_width/2),(-car_length/2, -car_width/2)])
