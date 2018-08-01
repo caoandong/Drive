@@ -51,7 +51,7 @@ FOV_orient = FOV_orient_new = car_orient
 # Initialize probes
 side_probe_len = 0.7
 front_probe_len = 1
-shift = 0.2
+shift = 0.25
 probes = Polygon([(0.0, 0.0), (0.0, side_probe_len), (0.0, 0.0), (0.0, -1*side_probe_len),
                  (0.0, 0.0), (front_probe_len+shift, 0.0), (0.0, 0.0), (0.1+shift, 0.0101), (0.2+shift, 0.0417),
                  (0.3+shift, 0.1), (0.4+shift, 0.2), (0.5+shift, 0.5), (0.4+shift, 0.2), (0.3+shift, 0.1), (0.2+shift, 0.0417),
