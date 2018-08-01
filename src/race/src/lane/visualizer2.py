@@ -69,6 +69,10 @@ turn_right_probe = LineString([(0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.
 # Initialize the ellpitical distribution
 ell_distrib = [[0,0],0,0,0]
 
+# Initialize left-right lanes
+left_right = []
+lane_predict = []
+
 # Map parameters that determine the size and orientation of the map
 p0 = [3.75, 4.66]
 p1 = [1.26, 2.88]
@@ -156,13 +160,21 @@ def callback_car(string):
     global car_pos_new
     global car_orient_new
     global ell_distrib
+    global lane_predict
 
     data = eval(string.data)
     car_pos_new = data[0]
     car_orient_new = data[1]
     try:
         ell_distrib = data[2]
-        # print 'elliptical distribution: ', ell_distrib
+    except:
+        pass
+    try:
+        left_right = data[3]
+    except:
+        pass
+    try:
+        lane_predict = data[4]
     except:
         pass
 
@@ -291,7 +303,44 @@ def update_anim(num):
     ell = affinity.rotate(ell, ang_off, origin='center', use_radians=True)
     x,y = ell.exterior.xy
     ell_plot.set_data(x,y)
-    print 'ell: ', ell
+
+    # Update left right
+    if len(left_right) > 0:
+        try:
+            l_lane = left_right[0]
+            x = [l_lane[0][0], l_lane[1][0]]
+            y = [l_lane[0][1], l_lane[1][1]]
+            left_plot.set_data(x,y)
+            r_lane = left_right[1]
+            x = [r_lane[0][0], r_lane[1][0]]
+            y = [r_lane[0][1], r_lane[1][1]]
+            right_plot.set_data(x,y)
+            print 'left right okay'
+        except:
+            pass
+
+    # Update prediction
+    if len(lane_predict) > 0:
+        try:
+            ll_lane = lane_predict[0][0]
+            x = [ll_lane[0][0], ll_lane[1][0]]
+            y = [ll_lane[0][1], ll_lane[1][1]]
+            ll_plot.set_data(x,y)
+            lr_lane = lane_predict[0][1]
+            x = [lr_lane[0][0], lr_lane[1][0]]
+            y = [lr_lane[0][1], lr_lane[1][1]]
+            lr_plot.set_data(x,y)
+            rl_lane = lane_predict[1][0]
+            x = [rl_lane[0][0], rl_lane[1][0]]
+            y = [rl_lane[0][1], rl_lane[1][1]]
+            rl_plot.set_data(x,y)
+            rr_lane = lane_predict[1][1]
+            x = [rr_lane[0][0], rr_lane[1][0]]
+            y = [rr_lane[0][1], rr_lane[1][1]]
+            rr_plot.set_data(x,y)
+            print 'predict okay'
+        except:
+            pass
 
     # Update FOV
     if show_FOV:
@@ -312,8 +361,7 @@ def update_anim(num):
         x,y = FOV.exterior.xy
         FOV_plot.set_data(x,y)
 
-    return car_plot, FOV_plot, probe_plot, left_probe_plot, right_probe_plot, front_probe_plot, turn_left_probe_plot, turn_right_probe_plot, ell_plot
-
+    return car_plot, FOV_plot, probe_plot, left_probe_plot, right_probe_plot, front_probe_plot, turn_left_probe_plot, turn_right_probe_plot, ell_plot, left_plot, right_plot, ll_plot, lr_plot, rl_plot, rr_plot
 
 rospy.init_node('visualizer')
 
@@ -342,6 +390,18 @@ if __name__ == '__main__':
         linewidth=3, solid_capstyle='round')
     ell_plot, = ax.plot([], [], color='r', alpha=0.5, fillstyle='full',
         linewidth=3, solid_capstyle='round')
+    left_plot, = ax.plot([], [], color='r', alpha=0.3, fillstyle='full',
+        linewidth=5, solid_capstyle='round')
+    right_plot, = ax.plot([], [], color='r', alpha=0.3, fillstyle='full',
+        linewidth=5, solid_capstyle='round')
+    ll_plot, = ax.plot([], [], color='m', alpha=0.3, fillstyle='full',
+        linewidth=5, solid_capstyle='round')
+    lr_plot, = ax.plot([], [], color='m', alpha=0.3, fillstyle='full',
+        linewidth=5, solid_capstyle='round')
+    rl_plot, = ax.plot([], [], color='y', alpha=0.3, fillstyle='full',
+        linewidth=5, solid_capstyle='round')
+    rr_plot, = ax.plot([], [], color='y', alpha=0.3, fillstyle='full',
+        linewidth=5, solid_capstyle='round')
 
     # Initialize the map
     map_path = '/home/antonio/catkin_ws/src/race/src/map/map.txt'

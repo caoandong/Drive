@@ -260,6 +260,34 @@ def check_left_turn():
     left_lane_predict = predict_left_turn()
     return left_lane_predict
 
+                if (odom_pos == odom_pos_prev) and (imu_accel > 0.05):
+                    ell, odom_pos_tmp, odom_orient_tmp = predict_pose_distrib(odom_pos_tmp, odom_orient_tmp)
+                    ell_list.append(ell)
+                elif odom_pos != odom_pos_prev:
+                    contain = 0
+                    if len(ell_list) >= 1:
+                        localize_debug.publish('number of ell distributions: %d' % len(ell_list))
+                        for ell in ell_list:
+                            if ell.contains(pt):
+                                contain = 1
+                                break
+                    if (contain == 1) or (len(ell_list) == 0):
+                        orient = np.array(car_orient)/np.linalg.norm(car_orient)
+                        w0 = 1 # weight of offset
+                        w1 = 1 # weight of cam_pos_shift
+                        localize_debug.publish('cam_pos_shift: %s' % str(cam_pos_shift))
+                        car_pos = np.array(odom_pos) + w0*offset*orient + w1*np.array(cam_pos_shift)
+                        car_pos = car_pos.tolist()
+                        localize_debug.publish('car_pos updated: %s' % str(car_pos))
+                        update_pose_prev_time = update_pose_now_time = rospy.get_time()
+                    car_orient = predict_orient(car_orient)
+                    odom_pos_prev = odom_pos
+                    odom_pos_tmp = car_pos
+                    # How to update car_orient
+                    odom_orient_tmp = car_orient
+                    localize_debug.publish('Revert back to present - pos: %s | orient: %s ' % (str(odom_pos_tmp), str(odom_orient_tmp)))
+                    ell_list = []
+
 # Predict what you are going to see after a 90 degree turn
 def predict_left_right(left_lane_predict, right_lane_predict):
     global left_lane, right_lane, left_lane_pts, right_lane_pts
@@ -303,6 +331,50 @@ def predict_left_right(left_lane_predict, right_lane_predict):
         update_toggle[3] = 0
 
     update_debug.publish('lane_predict: %s' % str(lane_predict))
+
+
+            if right_lane_turn == 1:
+                    if print_main == 1:
+                        print 'Left turn?'
+                        print 'check left line: ', cam_left_line
+                    if type(cam_left_line) == int:
+                        turn_left()
+                        return
+                elif right_lane_turn == 0:
+                    if print_main == 1:
+                        print 'T-turn or cross road?'
+                    if left_cnt == 0:
+                        turn_left()
+                        return
+                    if right_cnt == 0:
+                        turn_right()
+                        return
+                    if type(cam_left_line) == int:
+                        print 'do not see left line'
+                        turn_right()
+                        return
+                    if type(cam_right_line) == int:
+                        print 'do not see right line'
+                        turn_right()
+                        return
+                    if type(cam_left_line) != int:
+                        print 'can see left line'
+                        if type(cam_mid_right_line) != int:
+                            print 'can see mid right line'
+                            turn_right()
+                            return
+                    if type(cam_right_line) != int:
+                        print 'can see right line'
+                        if type(cam_mid_left_line) != int:
+                            print 'can see mid left line'
+                            turn_left()
+                            return
+            elif left_lane_turn == 0:
+                print 'Right turn?'
+                print 'check right line: ', cam_right_line
+                if type(cam_right_line) == int:
+                    turn_right()
+                    return
 
 # Predict the distribution of pose (position and orientation)
 # dt later from driver and IMU data

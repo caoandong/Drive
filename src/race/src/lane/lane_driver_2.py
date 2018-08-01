@@ -54,7 +54,6 @@ max_angle = 0.431139 # in radian
 car = Polygon([(-car_length/2, car_width/2),(car_length/2, car_width/2),
                        (car_length/2, -car_width/2),(-car_length/2, -car_width/2)])
 car_pos = [0,0]
-car_pos_prev = [0,0] # Center of the car, NOT the beacon
 car_orient = [1,0]
 car_orient_prev = [1,0]
 imu_orient = [1,0] # Inital direction is along the x-axis
@@ -85,6 +84,9 @@ turn_right_probe = LineString([(0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.
 driver = drive_param()
 driver.velocity = 0
 driver.angle = 0
+P = 200
+I = 0
+D = 0
 
 # Map parameters that determine the size and orientation of the map
 p0 = [3.75, 4.66]
@@ -126,15 +128,32 @@ class Update (threading.Thread):
         global turning, turning_complete, turning_start
         global driver, drive_pub
         global left_lane, right_lane, left_lane_turn, right_lane_turn, left_probe, right_probe, update_toggle
+        global imu_ang, imu_ang_prev, e_p, e_d, e_i
 
         update_debug.publish('Start update')
 
         while True:
             if START == 1 and init > 3:
+                try:
+                    imu_ang_diff = abs(imu_ang - imu_ang_prev)
+                    update_debug.publish('IMU angle difference: %f' % np.degrees(imu_ang_diff))
+                except:
+                    imu_ang_diff = 999999
+                    pass
                 if turning_complete != 0:
-                    update_toggle = [1,1,1,1]
-                    turning_complete_update()
-                elif turning == 0:
+                    # check the IMU to see if the car has turned much
+                    imu_ang_diff = abs(imu_ang - imu_ang_prev)
+                    if abs(imu_ang_diff - np.pi/2) < 0.2:
+                        print '-------------------TURNING COMPLETED-----------------'
+                        update_toggle = [1,1,1,1]
+                        turning_complete_update()
+                        imu_ang_prev = 1j
+                        # Reset error
+                        e_p = 0
+                        e_i = 0
+                        e_d = 0
+                    turning_complete = 0
+                elif turning == 0 or imu_ang_diff < 0.5:
                     update_probes()
                     update_debug.publish('Updating probes complete.')
                     update_env()
@@ -150,9 +169,6 @@ class Update (threading.Thread):
                 elif turning != 0:
                     update_debug.publish('Updating probes (turning)')
                     update_probes()
-                    # if turning_start == 1:
-                    #     turning_start = 0
-                    #     update_debug.publish('Updating left right (turning)')
 
                 update_debug.publish('left_probe: %s \nright_probe: %s\nleft_lane: %s\nright_lane: %s\n'
                                     % (str(left_probe), str(right_probe), str(left_lane), str(right_lane)))
@@ -181,40 +197,35 @@ class Localize (threading.Thread):
                 # Integrate ahead your pose_distrib and append those shapes into a list
                 # Once the odom_pos changes, if it falls into the list of pose_distrib, then update
                 # the odom_pos as the car_pos
-                localize_debug.publish('odom_pos: %s | odom_pos_prev: %s | odom_pos_tmp: %s | odom_orient_tmp: %s' 
-                                        % (str(odom_pos), str(odom_pos_prev), str(odom_pos_tmp), str(odom_orient_tmp)))
-                pt = Point(odom_pos[0], odom_pos[1])
-                accel = np.array([imu_lin_accel[0], imu_lin_accel[1]])
-                imu_accel = np.linalg.norm(accel)
-                if (odom_pos == odom_pos_prev) and (imu_accel > 0.05):
-                    ell, odom_pos_tmp, odom_orient_tmp = predict_pose_distrib(odom_pos_tmp, odom_orient_tmp)
-                    ell_list.append(ell)
-                elif odom_pos != odom_pos_prev:
-                    contain = 0
-                    if len(ell_list) >= 1:
-                        localize_debug.publish('number of ell distributions: %d' % len(ell_list))
-                        for ell in ell_list:
-                            if ell.contains(pt):
-                                contain = 1
-                                break
-                    if (contain == 1) or (len(ell_list) == 0):
-                        orient = np.array(car_orient)/np.linalg.norm(car_orient)
-                        w0 = 1 # weight of offset
-                        w1 = 1 # weight of cam_pos_shift
-                        localize_debug.publish('cam_pos_shift: %s' % str(cam_pos_shift))
-                        car_pos = np.array(odom_pos) + w0*offset*orient + w1*np.array(cam_pos_shift)
-                        car_pos = car_pos.tolist()
-                        localize_debug.publish('car_pos updated: %s' % str(car_pos))
-                        update_pose_prev_time = update_pose_now_time = rospy.get_time()
-                    car_orient = predict_orient(car_orient)
+
+                if odom_pos != odom_pos_prev:
+
+                    orient = np.array(car_orient)/np.linalg.norm(car_orient)
+                    w0 = 1 # weight of offset
+                    w1 = 1 # weight of cam_pos_shift
+                    localize_debug.publish('cam_pos_shift: %s' % str(cam_pos_shift))
+                    car_pos = np.array(odom_pos) + w0*offset*orient + w1*np.array(cam_pos_shift)
+                    car_pos = car_pos.tolist()
+                    localize_debug.publish('car_pos updated: %s' % str(car_pos))
+                    car_orient_pred = predict_orient(car_orient)
+                    
+                    odom_orient_tmp = np.array(odom_pos) - np.array(odom_pos_prev)
+                    odom_orient_tmp = odom_orient_tmp/np.linalg.norm(odom_orient_tmp)
+                    if abs(find_ang(np.array(car_orient_pred), odom_orient_tmp)) > 0.5:
+                        car_orient = odom_orient_tmp.tolist()
+                    else:
+                        w0 = 0.8
+                        w1 = 0.2
+                        car_orient = w0*np.array(car_orient_pred) + w1*odom_orient_tmp
+                        car_orient = car_orient.tolist()
                     odom_pos_prev = odom_pos
-                    odom_pos_tmp = car_pos
-                    # How to update car_orient
-                    odom_orient_tmp = car_orient
-                    localize_debug.publish('Revert back to present - pos: %s | orient: %s ' % (str(odom_pos_tmp), str(odom_orient_tmp)))
-                    ell_list = []
-                
+
                 visual_pub_car.publish("[%s, %s, %s]" % (str(car_pos), str(car_orient), str(pred_distrib)))
+
+                if turning_complete == 0 and turning == 0:
+                    # control using PID
+                    update_pid_error()
+                    PID()
 
 class Navigate (threading.Thread):
     def __init__(self):
@@ -231,56 +242,6 @@ class Navigate (threading.Thread):
     def stop(self):
         self.running = False
 
-class Visualize (threading.Thread):
-    def __init__(self):
-        self.running = False
-        super(Visualize, self).__init__()
-        # Initialize the plot
-        self.fig = plt.figure()
-        self.ax = plt.axes(xlim=(-3,5), ylim=(-1,8))
-
-    def start(self):
-        self.running = True
-        super(Visualize, self).start()
-
-    def plot_line(self, lines):
-        line_pts = []
-        for line in lines:
-            pts = []
-            for p in line.boundary:
-                pts.append((p.x,p.y))
-            line_pts.append(pts)
-        lc = mc.LineCollection(line_pts, linewidths=1)
-        self.ax.add_collection(lc)
-        x_lim, y_lim = get_lim(line_map_plot)
-        self.ax.set_xlim(x_lim)
-        self.ax.set_ylim(y_lim)
-    def run(self):
-        global START
-        while self.running and START == 1:
-            # Initialize the plot
-            car_plot, = self.ax.plot([], [], color='#6699cc', fillstyle='full',
-                linewidth=3, solid_capstyle='round')
-            probe_plot, = self.ax.plot([], [], color='r', alpha=0.5, fillstyle='full',
-                linewidth=3, solid_capstyle='round')
-            left_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
-                linewidth=3, solid_capstyle='round')
-            right_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
-                linewidth=3, solid_capstyle='round')
-            front_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
-                linewidth=3, solid_capstyle='round')
-            turn_left_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
-                linewidth=3, solid_capstyle='round')
-            turn_right_probe_plot, = self.ax.plot([], [], color='g', alpha=0.5, fillstyle='full',
-                linewidth=3, solid_capstyle='round')
-            
-            global line_map
-            self.plot_line(line_map)
-
-            self.plt.show()
-
-    def stop(self):
-        self.running = False
 # Basic helper functions:
 
 def quat_to_ang(quat):
@@ -647,7 +608,7 @@ def find_lane_turn(line):
     global car_pos, car_orient, print_update
     # Find the point in front of the car
     pt = find_front_pt_in_line(line)
-    vec = np.array(pt) - np.array(car_orient)
+    vec = np.array(pt) - np.array(car_pos)
     vec = vec/np.linalg.norm(vec)
     cross = check_cross(car_orient, pt)
     turn = 0 # 0 means turn right
@@ -677,8 +638,9 @@ def init_right_probe(pt, line_vec):
     probe = LineString([p0, p1])
     return probe
 
-def predict_left_turn(pt, left_turn):
-    global left_lane_pts, right_lane_pts
+def predict_left_turn(pt):
+    global left_lane, left_lane_pts, right_lane, right_lane_pts, left_lane_turn, right_lane_turn
+    global car_pos, car_orient
     global line_map
 
     left_right_set = set([(tuple(left_lane_pts[0]), tuple(left_lane_pts[1])), (tuple(right_lane_pts[0]), tuple(right_lane_pts[1]))])
@@ -687,12 +649,8 @@ def predict_left_turn(pt, left_turn):
     pred_left_lane = 0
     pred_right_lane = 0
     right_line_list =[]
-    if left_turn == 1:
-        # Turn left
-        probe = init_left_probe()
-    elif left_turn == 0:
-        # Turn right
-        probe = init_right_probe()
+    ball = Point(pt[0], pt[1]).buffer(1)
+    probe = 0
     for l in line_map:
         x0, x1 = l.xy[0]
         y0, y1 = l.xy[1]
@@ -705,8 +663,22 @@ def predict_left_turn(pt, left_turn):
             left_vec = left_vec/np.linalg.norm(left_vec)
             pred_left_lane = [p0, p1]
             update_debug.publish('found pred_left_lane: %s' % str(pred_left_lane))
+            # pt2 is the point in the line that is not pt
+            pt2 = set([tuple(p0), tuple(p1)]) - set([tuple(pt)])
+            pt2 = list(list(pt2)[0])
+            vec = np.array(pt2) - np.array(car_pos)
+            vec = vec/np.linalg.norm(vec)
+            cross = np.cross(np.array(car_orient), vec)
+            if cross > 0:
+                update_debug.publish("left lane: left")
+                left_lane_turn = 1
+                probe = init_left_probe(pt, left_lane)
+            else:
+                update_debug.publish("left lane: right")
+                left_lane_turn = 0
+                probe = init_right_probe(pt, left_lane)
             continue
-        if probe.intersects(l):
+        if ball.intersects(l):
             right_line_list.append([[x0, y0], [x1, y1]])
     update_debug.publish('right_line_list: %s' % str(right_line_list))
     num_line = len(right_line_list)
@@ -715,8 +687,10 @@ def predict_left_turn(pt, left_turn):
     elif num_line == 1:
         pred_right_lane = right_line_list[0]
         update_debug.publish('found pred_right_lane: %s' % str(pred_right_lane))
-    elif num_line > 1:
+    elif num_line > 1 and type(probe) != int:
         for l in right_line_list:
+            if not probe.intersects(l):
+                continue
             p0 = l[0]
             p1 = l[1]
             vec = np.array(p1) - np.array(p0)
@@ -728,22 +702,19 @@ def predict_left_turn(pt, left_turn):
                 break
     return [pred_left_lane, pred_right_lane]
 
-def predict_right_turn(pt, right_turn):
-    global left_lane_pts, right_lane_pts
+def predict_right_turn(pt):
+    global left_lane, left_lane_pts, right_lane, right_lane_pts, left_lane_turn, right_lane_turn
+    global car_pos, car_orient
     global line_map
-    
+
     left_right_set = set([(tuple(left_lane_pts[0]), tuple(left_lane_pts[1])), (tuple(right_lane_pts[0]), tuple(right_lane_pts[1]))])
     probe = 0
-    left_vec = 0
+    right_vec = 0
     pred_left_lane = 0
     pred_right_lane = 0
     left_line_list =[]
-    if right_turn == 1:
-        # Turn left
-        probe = init_left_probe()
-    elif right_turn == 0:
-        # Turn right
-        probe = init_right_probe()
+    ball = Point(pt[0], pt[1]).buffer(1)
+    probe = 0
     for l in line_map:
         x0, x1 = l.xy[0]
         y0, y1 = l.xy[1]
@@ -756,18 +727,34 @@ def predict_right_turn(pt, right_turn):
             right_vec = right_vec/np.linalg.norm(right_vec)
             pred_right_lane = [p0, p1]
             update_debug.publish('found pred_right_lane: %s' % str(pred_right_lane))
+            # pt2 is the point in the line that is not pt
+            pt2 = set([tuple(p0), tuple(p1)]) - set([tuple(pt)])
+            pt2 = list(list(pt2)[0])
+            vec = np.array(pt2) - np.array(car_pos)
+            vec = vec/np.linalg.norm(vec)
+            cross = np.cross(np.array(car_orient), vec)
+            if cross > 0:
+                update_debug.publish("right lane: left")
+                right_lane_turn = 1
+                probe = init_left_probe(pt, right_lane)
+            else:
+                update_debug.publish("right lane: right")
+                right_lane_turn = 0
+                probe = init_right_probe(pt, right_lane)
             continue
-        if probe.intersects(l):
+        if ball.intersects(l):
             left_line_list.append([[x0, y0], [x1, y1]])
     update_debug.publish('left_line_list: %s' % str(left_line_list))
     num_line = len(left_line_list)
     if num_line <= 0:
-        return [0, pred_right_lane]
+        return [pred_right_lane, 0]
     elif num_line == 1:
         pred_left_lane = left_line_list[0]
         update_debug.publish('found pred_left_lane: %s' % str(pred_left_lane))
-    elif num_line > 1:
+    elif num_line > 1 and type(probe) != int:
         for l in left_line_list:
+            if not probe.intersects(l):
+                continue
             p0 = l[0]
             p1 = l[1]
             vec = np.array(p1) - np.array(p0)
@@ -777,20 +764,20 @@ def predict_right_turn(pt, right_turn):
                 pred_left_lane = [p0, p1]
                 update_debug.publish('found pred_left_lane: %s' % str(pred_left_lane))
                 break
-    return [pred_left_lane, pred_left_lane]
+    return [pred_left_lane, pred_right_lane]
 
 # Check the left and right lines are aligned and that pred_left_lane and left_lane are perp
 def check_left_right_pred(line1, line2):
     global car_pos, car_orient
     global left_lane, right_lane
     check = 0
-    x0, x1 = line1.xy[0]
-    y0, y1 = line1.xy[1]
-    vec1 = np.array([x1,y1]) - np.array([x0,y0])
+    p0 = line1[0]
+    p1 = line1[1]
+    vec1 = np.array(p1) - np.array(p0)
     vec1 = vec1/np.linalg.norm(vec1)
-    x0, x1 = line2.xy[0]
-    y0, y1 = line2.xy[1]
-    vec2 = np.array([x1,y1]) - np.array([x0,y0])
+    p0 = line2[0]
+    p1 = line2[1]
+    vec2 = np.array(p1) - np.array(p0)
     vec2 = vec2/np.linalg.norm(vec2)
     dot = np.dot(vec1, np.array(vec2))
     if abs(abs(dot)-1) < 0.01:
@@ -805,18 +792,19 @@ def check_left_right_pred(line1, line2):
 
 def find_intersection():
     global left_lane_pts, right_lane_pts
-    global left_lane_turn, right_lane_turn
     global env_pts, print_update, update_toggle, lane_predict
 
     if update_toggle[1] == 0 and update_toggle[2] == 1:
         if type(left_lane_pts) != int and type(right_lane_pts) != int:
-            left_pt, left_lane_turn = find_lane_turn(left_lane_pts)
-            right_pt, right_lane_turn = find_lane_turn(right_lane_pts)
-            update_debug.publish('find intersection left: %d | find intersection right: %d' % (left_lane_turn, right_lane_turn))
-            left_lane_predict = predict_left_turn(left_pt, left_lane_turn)
-            right_lane_predict = predict_right_turn(right_pt, right_lane_turn)
+            # left_pt, left_lane_turn = find_lane_turn(left_lane_pts)
+            # right_pt, right_lane_turn = find_lane_turn(right_lane_pts)
+            # update_debug.publish('find intersection left: %d | find intersection right: %d' % (left_lane_turn, right_lane_turn))
+            left_pt = find_front_pt_in_line(left_lane_pts)
+            right_pt = find_front_pt_in_line(right_lane_pts)
+            left_lane_predict = predict_left_turn(left_pt)
+            right_lane_predict = predict_right_turn(right_pt)
             update_debug.publish('left_lane_predict: %s | right_lane_predict: %s' % (str(left_lane_predict), str(right_lane_predict)))
-            if type(left_lane_predict) == list and type(right_lane_predict) == list:
+            if type(left_lane_predict[0]) == list and type(left_lane_predict[1]) == list and type(right_lane_predict[0]) == list and type(right_lane_predict[1]) == list:
                 lane_predict = [left_lane_predict, right_lane_predict]
                 left_check = check_left_right_pred(left_lane_predict[0], left_lane_predict[1])
                 right_check = check_left_right_pred(right_lane_predict[0], right_lane_predict[1])
@@ -873,11 +861,7 @@ def dist_mid_lane():
     mid_pt = (np.array(left_lane_pts[0])+np.array(right_lane_pts[0]))/2.0
     if print_update == 1:
         print 'midpoint between left and right: ', mid_pt
-    # slope = (np.array(left_lane)+np.array(right_lane))/2.0
     slope = left_lane
-    # slope = np.array(left_lane_pts[1])-np.array(left_lane_pts[0])
-    # slope = slope/np.linalg.norm(slope)
-    # slope = align_vec(slope, car_orient)
     if print_update == 1:
         print 'slope between left and right: ', slope
 
@@ -895,64 +879,43 @@ def find_line_eq(line_pts):
 
 def find_dist_lines(line_pts1, line_pts2):
     m1,b1 = find_line_eq(line_pts1)
-    if m1 == 1j:
-        dist = line_pts1[0][0] - line_pts2[0][0]
     m2,b2 = find_line_eq(line_pts2)
+    if m1 == 1j or m2 == 1j:
+        dist = abs(line_pts1[0][0] - line_pts2[0][0])
+        return dist
+    dist = abs(b2-b1)/np.sqrt(m1**2+1)
+    return abs(dist)
 
 # Make sure that the left and right lane makes sense
 def check_lane_predict(left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp):
-    global car_pos, car_orient
-    global lane_predict, turning, turning_complete
+    global car_pos
+    global turning
 
     if turning == 0:
         # Check if lane_predict is correct:
-        # check if two lanes are parallel
+        # return 1 if everything checks out
+        # return 0 if one of the checks failed
 
+        # check if two lanes are parallel
         dot = np.dot(left_lane_tmp, right_lane_tmp)
+        update_debug.publish('dot between left and right: %f' % dot)
         if abs(abs(dot) - 1) > 0.01: 
             return 0
 
         # check if two lanes are close to each other
-        
         dist = find_dist_lines(left_lane_pts_tmp, right_lane_pts_tmp)
+        update_debug.publish('distance between left and right lane: %f' % dist)
+        if dist > 1:
+            return 0
 
         # check if two lanes are close to the car's position
-        # return 1 if everything checks out
-        # return 0 if one of the checks failed
-
-
-        try:
-            left_vec = find_line_vec(lane_predict[0][0])
-            right_vec = find_line_vec(lane_predict[0][1])
-            dot = np.dot(left_vec, np.array(car_orient))
-            assert abs(dot) >= 0.3
-            dot = np.dot(right_vec, np.array(car_orient))
-            assert abs(dot) >= 0.3
-            left_vec = align_vec(left_vec, np.array(car_orient))
-            left_vec = left_vec.tolist()
-            right_vec = align_vec(right_vec, np.array(car_orient))
-            right_vec = right_vec.tolist()
-            lane_predict[0] = [left_vec, right_vec]
-            return 2 # 2 means left
-        except:
-            pass
-
-        try:
-            left_vec = find_line_vec(lane_predict[1][0])
-            right_vec = find_line_vec(lane_predict[1][1])
-            dot = np.dot(left_vec, np.array(car_orient))
-            assert abs(dot) >= 0.3
-            dot = np.dot(right_vec, np.array(car_orient))
-            assert abs(dot) >= 0.3
-            left_vec = align_vec(left_vec, np.array(car_orient))
-            left_vec = left_vec.tolist()
-            right_vec = align_vec(right_vec, np.array(car_orient))
-            right_vec = right_vec.tolist()
-            lane_predict[1] = [left_vec, right_vec]
-            return 3 # 3 means right
-        except:
-            pass
-
+        left_line = LineString([tuple(left_lane_pts_tmp[0]), tuple(left_lane_pts_tmp[1])])
+        right_line = LineString([tuple(right_lane_pts_tmp[0]), tuple(right_lane_pts_tmp[1])])
+        ball = Point(car_pos[0], car_pos[1]).buffer(0.6)
+        if ball.intersects(left_line) or ball.intersects(right_line):
+            return 1
+        else:
+            return 0
     return 0
 
 def get_left_right_vec(lanes):
@@ -968,51 +931,117 @@ def get_left_right_vec(lanes):
     right_lane_pts_tmp = [p0, p1]
     return left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp
 
+def update_left_right(turn):
+    global left_lane, right_lane, left_lane_pts, right_lane_pts
+    global lane_predict
+
+    if len(lane_predict[0][0]) == 2 and len(lane_predict[0][1]) == 2 and len(lane_predict[1][0]) == 2 and len(lane_predict[1][1]) == 2:
+        if turn == 2:
+            # Turn left:
+            lanes = lane_predict[0]
+            left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp = get_left_right_vec(lanes)
+            left_check = check_lane_predict(left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp)
+            update_debug.publish('left_check: %d' % left_check)
+            print 'left_check: ', left_check
+            if left_check == 1:
+                left_lane = left_lane_tmp
+                left_lane_pts = left_lane_pts_tmp
+                right_lane = right_lane_tmp
+                right_lane_pts = right_lane_pts_tmp
+            else:
+                lanes = lane_predict[1]
+                left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp = get_left_right_vec(lanes)
+                right_check = check_lane_predict(left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp)
+                update_debug.publish('right_check: %d' % right_check)
+                print 'right_check: ', right_check
+                if right_check == 1:
+                    left_lane = left_lane_tmp
+                    left_lane_pts = left_lane_pts_tmp
+                    right_lane = right_lane_tmp
+                    right_lane_pts = right_lane_pts_tmp
+        elif turn == 3:
+            # Turn right:
+            lanes = lane_predict[1]
+            left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp = get_left_right_vec(lanes)
+            right_check = check_lane_predict(left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp)
+            update_debug.publish('right_check: %d' % right_check)
+            print 'right_check: ', right_check
+            if right_check == 1:
+                left_lane = left_lane_tmp
+                left_lane_pts = left_lane_pts_tmp
+                right_lane = right_lane_tmp
+                right_lane_pts = right_lane_pts_tmp
+            else:
+                lanes = lane_predict[0]
+                left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp = get_left_right_vec(lanes)
+                left_check = check_lane_predict(left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp)
+                update_debug.publish('left_check: %d' % left_check)
+                print 'left_check: ', left_check
+                if left_check == 1:
+                    left_lane = left_lane_tmp
+                    left_lane_pts = left_lane_pts_tmp
+                    right_lane = right_lane_tmp
+                    right_lane_pts = right_lane_pts_tmp
+
 # Update functions
+def update_pid_error():
+    global car_pos, car_orient, e_p, e_i, e_d, left_lane, right_lane, left_lane_pts, right_lane_pts, driver_pub, driver_vel
+
+    # cross track error:
+    error_vec = dist_mid_lane()
+    error = np.linalg.norm(np.array(error_vec))
+    cross = np.cross(np.array(car_orient), np.array(error_vec))
+    if cross > 0:
+        # Turn left, so negative
+        if error > 0:
+            error = -1*error
+    elif cross < 0:
+        # Turn right, so positive
+        if error < 0:
+            error = -1*error
+    e_p = 0.2*e_p + 0.8*error
+    print 'PID e_p: ', e_p
+
+    # cross track integrated:
+    e_i += e_p
+    print 'PID e_i: ', e_i
+
+    # cross track rate:
+    ang = find_ang(np.array(left_lane), np.array(car_orient))
+    speed = driver_vel
+    e_d = speed*np.sin(ang)
+    print 'PID e_d: ', e_d
+    localize_debug.publish('PID erros e_p: %f | e_d: %f | e_i: %f' % (e_p, e_d, e_i))
+
+def PID():
+    global car_pos, car_orient, e_p, e_i, e_d, P, I, D, turning
+    if turning == 0:
+        driver.velocity = 18
+        driver.angle = P*e_p + D*e_D + I*e_i
+        localize_debug.publish('PID output angle: %f' % driver.angle)
+        drive_pub.publish(driver)
+
 def turning_complete_update():
     global turning, turning_complete, print_update
     global driver, drive_pub
-    global left_lane, right_lane, left_lane_turn, right_lane_turn, lane_predict, update_toggle
+    global left_lane, right_lane, left_lane_pts, right_lane_pts
+    global left_lane_turn, right_lane_turn, lane_predict, update_toggle
+    global imu_ang, imu_ang_prev
 
     turn = turning_complete
-    turning_complete = 0
     update_toggle = [1,1,1]
     # Update
     driver.velocity = 16
     driver.angle = 0
     drive_pub.publish(driver)
 
-
-    if len(lane_predict[0][0]) == 2 and len(lane_predict[0][1]) == 2 and len(lane_predict[1][0]) == 2 and len(lane_predict[1][1]) == 2:
-        lanes = lane_predict[0]
-        left_lane_tmp, left_lane_pts_tmp, right_lane_tmp, right_lane_pts_tmp = get_left_right_vec(lanes)
-
-
-        lanes = lane_predict[1]
-        left_lane, left_lane_pts, right_lane, right_lane_pts = get_left_right_vec(lanes)
-
-    # check if the predicted lanes are right
-    check = check_lane_predict(turn)
-    if check != 0:
-        if turn == 2:
-            # Turn left
-            lanes = lane_predict[0]
-            left_lane, left_lane_pts, right_lane, right_lane_pts = get_left_right_vec(lanes)
-            
-        elif turn == 3:
-            # Turn right
-            lanes = lane_predict[1]
-            left_lane, left_lane_pts, right_lane, right_lane_pts = get_left_right_vec(lanes)
+    update_left_right(turn)
+    update_debug.publish('left right updated: left_lane: %s | right_lane: %s' % (str(left_lane), str(right_lane)))
     update_probes()
+    update_debug.publish('probes updated: left_probe: %s | right_probe: %s' % (str(left_probe), str(right_probe)))
     update_env()
     cam_correct_pose()
-    print 'left probe: ', left_probe
-    print 'right_probe: ', right_probe
-    print 'Updated left and right lanes: ', left_lane, right_lane
     find_intersection()
-    # if print_update == 1:
-    print 'Updated turns: ', left_lane_turn, right_lane_turn
-    print 'Update finished'
     driver.velocity = 18
     driver.angle = 0
     drive_pub.publish(driver)
@@ -1099,16 +1128,19 @@ def update_env():
 # update the pose change of the car
 def update_pose_diff():
     global car
-    global car_pos
-    global car_pos_prev
+    global car_pos, front_probe
     global car_orient
-    global car_orient_prev
     global car_x_off
     global car_y_off
     global car_ang_off, print_update
 
+    x0,x1 = front_probe.coords.xy[0]
+    y0,y1 = front_probe.coords.xy[1]
+    car_pos_prev = np.array([x0,y0])
+    car_orient_prev = np.array([x1,y1]) - np.array([x0,y0])
+
     if abs(car_orient[0] - car_orient_prev[0]) >= 0.001 and abs(car_orient[1] - car_orient_prev[1]) >= 0.00001:
-        car_ang_off = find_ang(np.array(car_orient_prev), np.array(car_orient))
+        car_ang_off = find_ang(car_orient_prev, np.array(car_orient))
         # car_ang_off = np.dot(np.array(car_orient_prev), np.array(car_orient))/(np.linalg.norm(car_orient)*np.linalg.norm(car_orient_prev))   
         
         # car_ang_off = np.arccos(car_ang_off)
@@ -1163,7 +1195,8 @@ def cam_correct_pose():
     global left_lane, right_lane
     global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line
     global turning, turning_complete, print_local
-    global cam_pos_shift
+    global cam_pos_shift, update_toggle
+    global e_p
 
     if START == 1 and init > 3 and turning == 0:
 
@@ -1209,23 +1242,30 @@ def cam_correct_pose():
 
             counter += 1
         if counter != 0:
-            if print_local == 1:
-                print 'counter: ', counter
             ang_off = (left_ang + right_ang)/float(counter)
             update_debug.publish('-------------------final ang offset: %f' % np.degrees(ang_off))
-            # Update the car's orientation
-            orient = [-np.sin(ang_off), np.cos(ang_off)]
-            update_debug.publish('previous orientation: %s' % str(car_orient))
-            car_orient = orient
-            update_debug.publish('previous orientation: %s | camera updated orientation: %s' % ( str(car_orient_prev), str(car_orient)))
+            if ang_off < np.pi/4.0 and ang_off > -np.pi/4.0:
+                # Update the car's orientation
+                orient = [-np.sin(ang_off), np.cos(ang_off)]
+                car_orient_prev = car_orient
+                orient_diff = np.array(orient) - np.array(car_orient)
+                weight = 1.0/(ang_off+1.0)
+                car_orient = np.array(car_orient) + weight*orient_diff
+                car_orient = car_orient.tolist()
+                update_debug.publish('previous orientation: %s | camera updated orientation: %s' % ( str(car_orient_prev), str(car_orient)))
+            else:
+                # There must be some issues, update everything
+                update_toggle = [1,1,1,1]
 
             # Update the car's position shift
             if counter == 2:
                 if print_local == 1:
                     print 'predicted road width: ', left_dist + right_dist
                 dist = (right_dist - left_dist)/2.0
-                # if print_local == 1:
-                print 'distance from middle: ', dist
+                # Update error for PID control
+                e_p = 0.2*e_p + 0.8*dist
+                print 'Cross track error: ', e_p
+                localize_debug.publish('Cross track error: %f ' % e_p)
             elif left_dist != 0:
                 dist = car_width/2.0 - left_dist
             elif right_dist != 0:
@@ -1362,6 +1402,8 @@ def init_orient():
         print 'final shifted car_pos: ', car_pos
         get_left_right()
         find_intersection()
+        global lane_predict
+        print 'init lane_predict: ', lane_predict
 
         init += 1
         # update_probes()
@@ -1391,13 +1433,13 @@ def fuse_speed():
     scale = 0.1 # parameter to weigh the different variables
     speed = 0
 
-    # counter-closewise is negative, clockwise is positive
-    # so invert the sign
     driver_vec = [driver_vel*np.cos(-1*driver_ang), driver_vel*np.sin(-1*driver_ang)]
-
-    # We trust the driver a lot more
-    imu_speed = np.linalg.norm(imu_vel)
-    speed = (1-scale)*abs(driver_vel) + scale*imu_speed
+    driver_vec = rotate_by_rad(driver_vec, ang)
+    imu_vel_vec = rotate_by_rad(imu_vel, ang)
+    
+    vel_scale = 0.1
+    vel = (1-vel_scale)*np.array(driver_vec) + vel_scale*np.array(imu_vel)
+    speed = np.linalg.norm(vel)
 
     return speed
 
@@ -1413,7 +1455,6 @@ def fuse_angle():
 
     # We trust the driver a lot more
     ang = (1-scale)*driver_ang + scale*imu_ang
-    imu_ang = ang
 
     return ang
 
@@ -1448,7 +1489,8 @@ def gauss_distrib(a, b):
 
 def predict_orient(orient_tmp):
     global turning, offset, car_length
-    global localize_debug
+    global localize_debug, dt
+
     car_ang = find_ang([1,0], orient_tmp)
     speed, ang = fuse_speed_ang(car_ang)
     orient = np.array(orient_tmp)/np.linalg.norm(orient_tmp)
@@ -1486,8 +1528,7 @@ def predict_pose_distrib(pos_tmp, orient_tmp):
     # Given a new coordinate from GPS, find the reliability of that coord
 
     global turning, pred_distrib, offset, car_length
-
-    dt = 0.003 # Set this manually for now
+    global dt
     localize_debug.publish("turning: %d" % turning)
     localize_debug.publish("dt: %f" % dt)
 
@@ -1674,6 +1715,8 @@ def navigate():
     global env_lines
     global driver, driver_pub
     global turning, turning_complete, left_lane_turn, right_lane_turn
+    global imu_ang, imu_ang_prev
+    global lane_predict
 
     if print_main == 1:
         print '------------------------- START NAVIGATE --------------------------'
@@ -1701,6 +1744,9 @@ def navigate():
                 driver.angle = 0
                 drive_pub.publish(driver)
                 turning = 1
+                if imu_ang_prev == 1j:
+                    imu_ang_prev = imu_ang
+                    localize_debug.publish('Starting IMU angle prev: %f' % imu_ang_prev)
                 break
         if turning == 1:
             turning = 0
@@ -1709,6 +1755,7 @@ def navigate():
                 print 'left lane: ', left_lane_turn
                 print 'right lane: ', right_lane_turn
                 print '0 means right and 1 means left'
+                print 'lane_predict: ', lane_predict
 
             left_cnt = 0
             right_cnt = 0
@@ -1721,60 +1768,92 @@ def navigate():
                 print 'left intersection count: ', left_cnt
                 print 'right intersection count: ', right_cnt
 
-            if left_cnt == 0 and type(cam_left_line) == int:
-                if print_main == 1:
-                    print 'left got nothing'
-                turn_left()
-                return
-            if right_cnt == 0 and type(cam_right_line) == int:
-                if print_main == 1:
-                    print 'right got nothing'
-                turn_right()
-                return
             if left_lane_turn == 1:
-                if right_lane_turn == 1:
-                    if print_main == 1:
-                        print 'Left turn?'
-                        print 'check left line: ', cam_left_line
-                    if type(cam_left_line) == int:
-                        turn_left()
-                        return
-                elif right_lane_turn == 0:
-                    if print_main == 1:
-                        print 'T-turn or cross road?'
-                    if left_cnt == 0:
-                        turn_left()
-                        return
-                    if right_cnt == 0:
-                        turn_right()
-                        return
-                    if type(cam_left_line) == int:
-                        print 'do not see left line'
-                        turn_right()
-                        return
-                    if type(cam_right_line) == int:
-                        print 'do not see right line'
-                        turn_right()
-                        return
-                    if type(cam_left_line) != int:
-                        print 'can see left line'
-                        if type(cam_mid_right_line) != int:
-                            print 'can see mid right line'
-                            turn_right()
-                            return
-                    if type(cam_right_line) != int:
-                        print 'can see right line'
-                        if type(cam_mid_left_line) != int:
-                            print 'can see mid left line'
+                if len(lane_predict[0][0]) == 2 and len(lane_predict[0][1]) == 2:
+                    # check if the car is close to the lanes
+                    left_lane = lane_predict[0][0]
+                    right_lane = lane_predict[0][1]
+                    pt_list = [left_lane[0], left_lane[1], right_lane[0], right_lane[1]]
+                    for pt in pt_list:
+                        dist = np.sqrt((pt[0] - car_pos[0])**2 + (pt[1] - car_pos[1])**2)
+                        if dist < 0.7:
+                            print 'Turn left because distance: ', dist
                             turn_left()
                             return
-            elif left_lane_turn == 0:
-                print 'Right turn?'
-                print 'check right line: ', cam_right_line
-                if type(cam_right_line) == int:
+                if left_cnt == 0:
+                    print 'turn left because no left_cnt'
+                    turn_left()
+                    return
+                if type(cam_right_line) != int:
+                    if type(cam_mid_left_line) != int or type(cam_mid_line) != int:
+                        print 'Has to turn left because see right line and mid line'
+                        turn_left()
+                        return
+            if left_lane_turn == 0:
+                if len(lane_predict[0][0]) == 2 and len(lane_predict[0][1]) == 2:
+                    # check if the car is close to the lanes
+                    left_lane = lane_predict[0][0]
+                    right_lane = lane_predict[0][1]
+                    pt_list = [left_lane[0], left_lane[1], right_lane[0], right_lane[1]]
+                    for pt in pt_list:
+                        dist = np.sqrt((pt[0] - car_pos[0])**2 + (pt[1] - car_pos[1])**2)
+                        if dist < 0.7:
+                            print 'Turn right because distance: ', dist
+                            turn_right()
+                            return
+                if right_cnt == 0:
+                    print 'Turn right because no right_cnt'
                     turn_right()
                     return
-            
+                if type(cam_left_line) != int:
+                    if type(cam_mid_left_line) != int or type(cam_mid_line) != int:
+                        print 'Has to turn right because see left line and mid line'
+                        turn_right()
+                        return
+            if right_lane_turn == 1:
+                print 'check length: ', len(lane_predict[0][0]), len(lane_predict[0][1])
+                if len(lane_predict[1][0]) == 2 and len(lane_predict[1][1]) == 2:
+                    # check if the car is close to the lanes
+                    left_lane = lane_predict[1][0]
+                    right_lane = lane_predict[1][1]
+                    pt_list = [left_lane[0], left_lane[1], right_lane[0], right_lane[1]]
+                    for pt in pt_list:
+                        dist = np.sqrt((pt[0] - car_pos[0])**2 + (pt[1] - car_pos[1])**2)
+                        if dist < 0.7:
+                            print 'Turn right because distance: ', dist
+                            turn_left()
+                            return
+                if left_cnt == 0:
+                    print 'turn left because no left_cnt'
+                    turn_left()
+                    return
+                if type(cam_right_line) != int:
+                    if type(cam_mid_left_line) != int or type(cam_mid_line) != int:
+                        print 'Has to turn left because see right line and mid line'
+                        turn_left()
+                        return
+            if right_lane_turn == 0:
+                print 'check length: ', len(lane_predict[0][0]), len(lane_predict[0][1])
+                if len(lane_predict[1][0]) == 2 and len(lane_predict[1][1]) == 2:
+                    # check if the car is close to the lanes
+                    left_lane = lane_predict[1][0]
+                    right_lane = lane_predict[1][1]
+                    pt_list = [left_lane[0], left_lane[1], right_lane[0], right_lane[1]]
+                    for pt in pt_list:
+                        dist = np.sqrt((pt[0] - car_pos[0])**2 + (pt[1] - car_pos[1])**2)
+                        if dist < 0.7:
+                            print 'Turn right because distance: ', dist
+                            turn_right()
+                            return
+                if right_cnt == 0:
+                    print 'Turn right because no right_cnt'
+                    turn_right()
+                    return
+                if type(cam_left_line) != int:
+                    if type(cam_mid_left_line) != int or type(cam_mid_line) != int:
+                        print 'Has to turn right because see left line and mid line'
+                        turn_right()
+                        return
             print 'Cannot decide, slowly moving forward.'
             turning_complete = turning
             turning = 0
@@ -1875,7 +1954,8 @@ def joy_callback(joy_data):
     global left_lane, right_lane, left_lane_pts, right_lane_pts, lane_predict, update_toggle
     global car_x_off, car_y_off, car_ang_off, pred_distrib
     global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line, cam_pos_shift
-    global odom_pos, odom_pos_prev, odom_pos_tmp
+    global odom_pos, odom_pos_prev, odom_pos_tmp, e_p, e_d, e_i
+    global imu_lin_accel, imu_ang_vel, imu_vel, imu_now_time, imu_prev_time, imu_vel, imu_ang, imu_ang_prev
 
     # RB
     if (joy_data.buttons[5] == 1):
@@ -1919,6 +1999,21 @@ def joy_callback(joy_data):
             init_orient_list = []
             init_pos_list = []
             cam_pos_shift = [0,0]
+
+            # Reset IMU
+            imu_lin_accel = [0,0]
+            imu_ang_vel = 0
+            imu_vel = 0
+            imu_now_time = 0
+            imu_prev_time = 0
+            imu_vel = [0,0]
+            imu_ang = 0
+            imu_ang_prev = 1j
+
+            # Reset PID control errors
+            e_p = 0 # Cross track error
+            e_d = 0 # Cross track error rate
+            e_i = 0 # Cross track error integral
 
             # Reset environment
             env_lines = []
@@ -2021,7 +2116,7 @@ def callback_camera(string):
 
 # Obtaining the car's pose
 def callback(odom):
-    global START, odom_pos, odom_pos_tmp
+    global START, odom_pos, odom_pos_tmp, odom_pos_prev
     global car_pos, prev_pos
 
     if START == 1:
@@ -2036,6 +2131,7 @@ def callback(odom):
             dist = np.linalg.norm(vec)
             if dist <= 0.75:
                 car_pos = odom_pos
+            odom_pos_prev = odom_pos
 
 # Obtaining the car's location
 def callback_tag(data):
@@ -2086,7 +2182,13 @@ imu_now_time = 0
 imu_prev_time = 0
 imu_vel = [0,0]
 imu_ang = 0
+imu_ang_prev = 1j
 pred_distrib = [[0,0],0,0,0]
+
+# Initialize PID control errors
+e_p = 0 # Cross track error
+e_d = 0 # Cross track error rate
+e_i = 0 # Cross track error integral
 
 # Initialize environment variables
 env_lines = []
@@ -2105,6 +2207,7 @@ update_toggle = [1,1,1]
 
 num_cycles = 20
 rate = rospy.Rate(num_cycles)
+dt = 0.003 # Set this manually for now
 
 # Start new threads
 threads = []
@@ -2132,7 +2235,7 @@ if __name__ == '__main__':
     update_pose_prev_time = update_pose_now_time = 0
 
     while not rospy.is_shutdown():
-        visual_pub_car.publish("[%s, %s, %s]" % (str(car_pos), str(car_orient), str(pred_distrib)))
+        visual_pub_car.publish("[%s, %s, %s, %s, %s]" % (str(car_pos), str(car_orient), str(pred_distrib), str([left_lane_pts, right_lane_pts]), str(lane_predict)))
         print 'car_orient: ', car_orient
         if START == 1:
             if init <= 3:
