@@ -6,6 +6,11 @@ from matplotlib import collections as mc
 
 # map_path = 'map.txt'
 
+# map must be in strict order:
+# largest outline: the first
+# interior outlines: the next
+# points: must be connected in order
+
 def map_gen(map_path, p0, p1):
     # have to provide the first and second transformed point in the map
 
@@ -18,6 +23,8 @@ def map_gen(map_path, p0, p1):
         elif counter%2 == 1:
             map_lines = eval(line)
         counter += 1
+    p0 = np.array(p0)
+    p1 = np.array(p1)
     vec1 = p1 - p0
     vec2 = np.array(map_pts[1]) - np.array(map_pts[0])
     # print 'v1: ', vec1
@@ -70,7 +77,30 @@ def map_gen(map_path, p0, p1):
         line_pt = [tuple(map_pts[pair[0]]), tuple(map_pts[pair[1]])]
         lines.append(LineString(line_pt))
         line_pts.append(line_pt)
-    return lines, line_pts
+
+    poly = [[]]
+    poly_idx = []
+    poly_count = 0
+    for pair in map_lines:
+        new_pts = [p for p in pair if p not in poly_idx]
+        if len(new_pts) == 0:
+            # create new poly
+            poly_idx = []
+            poly_count += 1
+            poly.append([])
+        else:
+            for pt in new_pts:
+                poly_idx.append(pt)
+                poly[poly_count].append(tuple(map_pts[pt]))
+    
+    poly_list = []
+    for pts in poly:
+        if len(pts) >= 3:
+            shape = Polygon(pts)
+            poly_list.append(shape)
+    # print poly_list[0].centroid.coords[0]
+
+    return lines, line_pts, poly_list
 
 def map_plot(line_pts):
     lc = mc.LineCollection(line_pts, linewidths=1)
@@ -85,10 +115,8 @@ def map_plot(line_pts):
 
     plt.show()
 
-# p0 = np.array([1.373, 2.211])
-# p1 = np.array([3.942, 3.689])
+# p0 = np.array([3.75, 4.66])
+# p1 = np.array([1.26, 2.88])
+# map_path = '/home/antonio/catkin_ws/src/race/src/map/map.txt'
 
-# lines, line_pts = map_gen(map_path, p0, p1)
-
-#plot it
-
+# lines, line_pts, poly_list = map_gen(map_path, p0, p1)

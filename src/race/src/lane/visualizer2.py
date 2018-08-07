@@ -41,6 +41,8 @@ car_ang_off = 0.0
 car_orient = car_orient_new = [1,0] # Inital direction is along the x-axis
 # Initialize car
 car_pos = car_pos_new = [0,0]
+car_pos_pred = [0,0]
+odom_pos = [0,0]
 
 # Initialize FOV
 FOV = Polygon([(0,0),(0.75,0.59),(0.75,-0.59)])
@@ -157,7 +159,7 @@ def plot_line(lines):
 
 # Callback functions
 def callback_car(string):
-    global car_pos_new
+    global car_pos_new, car_pos_pred, odom_pos
     global car_orient_new
     global ell_distrib
     global lane_predict
@@ -177,6 +179,17 @@ def callback_car(string):
         lane_predict = data[4]
     except:
         pass
+    try:
+        car_pos_pred = data[5]
+        print 'car_pos_pred: ', car_pos_pred
+    except:
+        pass
+    try:
+        odom_pos = data[6]
+        print 'odom_pos: ', odom_pos
+    except:
+        pass
+
 
 def update_pose_diff():
     global car, car_pos, car_pos_new, car_orient, car_orient_new
@@ -342,6 +355,18 @@ def update_anim(num):
         except:
             pass
 
+    global pred_pos_plot, odom_pos_plot
+    global car_pos_pred, odom_pos
+    try:
+        pred_pos_plot.set_data(car_pos_pred[0], car_pos_pred[1])
+    except:
+        pass
+    try:
+        odom_pos_plot.set_data(odom_pos[0], odom_pos[1])
+    except:
+        pass
+
+
     # Update FOV
     if show_FOV:
         FOV_pos_new = car_pos
@@ -361,7 +386,7 @@ def update_anim(num):
         x,y = FOV.exterior.xy
         FOV_plot.set_data(x,y)
 
-    return car_plot, FOV_plot, probe_plot, left_probe_plot, right_probe_plot, front_probe_plot, turn_left_probe_plot, turn_right_probe_plot, ell_plot, left_plot, right_plot, ll_plot, lr_plot, rl_plot, rr_plot
+    return car_plot, FOV_plot, probe_plot, left_probe_plot, right_probe_plot, front_probe_plot, turn_left_probe_plot, turn_right_probe_plot, ell_plot, left_plot, right_plot, ll_plot, lr_plot, rl_plot, rr_plot, pred_pos_plot, odom_pos_plot
 
 rospy.init_node('visualizer')
 
@@ -402,10 +427,12 @@ if __name__ == '__main__':
         linewidth=5, solid_capstyle='round')
     rr_plot, = ax.plot([], [], color='y', alpha=0.3, fillstyle='full',
         linewidth=5, solid_capstyle='round')
+    pred_pos_plot, = ax.plot([],[],marker='o',markersize=10,color='red')
+    odom_pos_plot, = ax.plot([],[],marker='o',markersize=10,color='blue')
 
     # Initialize the map
     map_path = '/home/antonio/catkin_ws/src/race/src/map/map.txt'
-    line_map, line_map_plot = map_gen.map_gen(map_path, np.array(p0), np.array(p1))
+    line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1))
     plot_line(line_map)
 
     animation = anim.FuncAnimation(fig, update_anim, frames=30, blit=True)
