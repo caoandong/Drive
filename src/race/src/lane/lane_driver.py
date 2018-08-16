@@ -142,6 +142,74 @@ if check_intersection() == 1:
     left_lane_predict.append(pred_left_lane)
     left_lane_predict.append(pred_right_lane)
     update_debug.publish('left_lane_predict: %s' % str(left_lane_predict))
+def create_node_graph(node_dict, line_map, ball_line_dict):
+    global lane_width, lane_probe
+    global ax
+    G = nx.Graph()
+    node_idx = 0
+    node_ball_list = []
+    graph_edges = []
+    for node, val in node_dict.items():
+        x,y = node.split("_")
+        x = float(eval(x))
+        y = float(eval(y))
+        ax.text(x,y,"%d"%node_idx, fontsize=15)
+        G.add_node(node_idx, pos=[x,y], val=val)
+        node_idx += 1
+        ball = Point(x,y).buffer(lane_width/2.0)
+        node_ball_list.append(ball)
+    
+    for node_idx, node_data in G.nodes(data=True):
+        print 'The ', node_idx, '-th node: ', node_data["val"][1]
+        node_pos = node_data["pos"]
+        node_val = node_data["val"]
+        for vec in node_val[1]:
+            hit = 0
+            probe_length = 0
+            node_hit = 0
+            while hit == 0:
+                probe_length += lane_width
+                target = np.array(node_pos) + probe_length*np.array(vec)
+                target = tuple(target.tolist())
+                probe = LineString([tuple(node_pos), target])
+                lane_probe = probe
+                # print 'probe: ', probe
+                for line in line_map:
+                    if probe.intersects(line):
+                        hit = 1
+                        break
+                for ball_hit in node_ball_list:
+                    ball_x, ball_y = ball_hit.centroid.xy
+                    error = np.sqrt((ball_x[0]-node_pos[0])**2+(ball_y[0]-node_pos[1])**2)
+                    if error < 0.1:
+                        continue
+                    if probe.intersects(ball_hit):
+                        hit = 1
+                        ball_x, ball_y = ball_hit.centroid.xy
+                        node_hit = [ball_x[0],ball_y[0]]
+                        # circle = plt.Circle((ball_x[0],ball_y[0]), lane_width/2.0, color="m", alpha=0.5)
+                        # ax.add_artist(circle)
+                        break
+            # print 'node hit: ', node_hit
+            if type(node_hit) == list:
+                for nb_idx, nb_data in G.nodes(data=True):
+                    if nb_idx == node_idx:
+                        continue
+                    # print 'checking ', nb_idx, ' my idx: ', node_idx
+                    error = np.linalg.norm(np.array(node_hit) - np.array(nb_data['pos']))
+                    # print 'nb position: ', nb_data['pos']
+                    # print 'position error: ',error
+                    if error < 0.1:
+                        dist = np.array(node_pos) - np.array(nb_data['pos'])
+                        mid = np.array(nb_data['pos']) + dist/2.0
+                        dist = np.linalg.norm(dist)
+                        ax.text(mid[0],mid[1],"%f"%dist, fontsize=10)
+                        G.add_edge(node_idx, nb_idx, dist=dist)
+
+                        break
+    return G, graph_edges
+
+
 
 def predict_left_turn(pt):
     global env_lines, left_lane_pts, right_lane_pts, car_pos, car_orient

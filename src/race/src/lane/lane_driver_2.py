@@ -370,7 +370,7 @@ def rotate_by_rad(vec, ang):
 
 def avg_list(vec_list):
     x_sum = 0
-    y_sum = 0
+    y_sum = 0line_
     num = len(vec_list)
     for vec in vec_list:
         x_sum += vec[0]

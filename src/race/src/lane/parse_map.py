@@ -6,6 +6,7 @@
 # test finding a shortest route
 
 import numpy as np
+import threading
 import shapely
 from shapely.geometry import Point, LineString, Polygon
 from shapely import affinity
@@ -15,12 +16,29 @@ from matplotlib import collections as mc
 import matplotlib.animation as anim
 import matplotlib.patches as patches
 import itertools
+import networkx as nx
+from collections import deque
+from heapq import heappush, heappop
+from itertools import count
+from networkx.utils import generate_unique_node
 
 map_path = '/home/antonio/catkin_ws/src/race/src/map/map_2.txt'
 lane_width = 0.6
+lane_probe = 0
 # Map parameters that determine the size and orientation of the map
 p0 = [3.75, 4.66]
 p1 = [1.26, 2.88]
+
+class Visualize (threading.Thread):
+    def __init__(self):
+        thread = threading.Thread(target=self.run, args=())
+        thread.daemon = True
+        thread.start()
+    def run(self):
+        global fig, ax, line_map
+        global lane_probe, probe_plot
+        print 'Start visualize'
+        plot_line(line_map)
 
 def get_lim(line_map_plot):
     x_min = 1000
@@ -76,7 +94,7 @@ def get_map_pts(map_poly):
         for i in range(len(x)):
             try:
                 check = vert_dict["%f_%f" % (float(x[i]),float(y[i]))]
-                print 'pt already found'
+                # print 'pt already found'
                 continue
             except:
                 pass
@@ -127,7 +145,7 @@ def get_line_list(ball_list, line_map):
             for line in line_map:
                 if ball.intersects(line):
                     lines_tmp.append(line)
-        print 'number of lines: ', len(lines_tmp)
+        # print 'number of lines: ', len(lines_tmp)
         line_list.append(lines_tmp)
     return line_list
 
@@ -184,7 +202,7 @@ def get_node_list(ball_list, node_dict, ball_line_dict):
             node_list.append(node)
             dist_vec = np.array(pt_list[0]) - np.array(pt_list[1])
             dist = np.linalg.norm(dist_vec)
-            print dist, lane_width, lane_width*np.sqrt(2)
+            # print dist, lane_width, lane_width*np.sqrt(2)
             for line_pts in line_pts_list:
                 line_vec = get_node_line_vec(line_pts, node)
                 if line_vec not in line_vec_list:
@@ -193,27 +211,25 @@ def get_node_list(ball_list, node_dict, ball_line_dict):
                 line_vec_list_tmp = []
                 for pair in itertools.combinations(line_vec_list, 2):
                     dot = np.dot(np.array(pair[0]), np.array(pair[1]))
-                    print 'dot product of ', pair, ' is ', dot
+                    # print 'dot product of ', pair, ' is ', dot
                     if dot < 0.1:
                         line_vec_list_tmp = [pair[0], pair[1]]
                         line_vec_list = line_vec_list_tmp
                         break
             if abs(dist - lane_width*np.sqrt(2)) < lane_width*0.2:
-                print 'node at ', node, ' is L'
-                node_dict["%f_%f"%(float(node[0]), float(node[1]))] = ["L", line_vec_list]
+                # print 'node at ', node, ' is L'
+                node_dict["%f_%f"%(float(node[0]), float(node[1]))] = ["L", line_vec_list, pt_list]
             elif abs(dist - lane_width) < lane_width*0.2:
                 line_vec_list_tmp = line_vec_list[:]
-                print len(line_vec_list)
                 for line_vec in line_vec_list:
                     dot = np.dot(dist_vec, np.array(line_vec))
-                    print dot
                     if abs(dot) < 0.2:
                         node = np.array(node)-lane_width/2.0*np.array(line_vec)
                         node = node.tolist()
                     if abs(abs(dot)-1) < 0.5:
                         line_vec_list_tmp.append((-1*np.array(line_vec)).tolist())       
-                print 'node at ', node, ' is T'
-                node_dict["%f_%f"%(float(node[0]), float(node[1]))] = ["T", line_vec_list_tmp]
+                # print 'node at ', node, ' is T'
+                node_dict["%f_%f"%(float(node[0]), float(node[1]))] = ["T", line_vec_list_tmp, pt_list]
             continue
         elif len(pt_list) == 4:
             max_dist = -1
@@ -223,11 +239,10 @@ def get_node_list(ball_list, node_dict, ball_line_dict):
                 if dist > max_dist:
                     max_dist = dist
                     max_pts = [pair[0], pair[1]]
-            print max_pts
             node = (np.array(max_pts[1]) + np.array(max_pts[0]))/2.0
             node = node.tolist()
             node_list.append(node)
-            print 'node at ', node, ' is X'
+            # print 'node at ', node, ' is X'
             for line_pts in line_pts_list:
                 line_vec = get_node_line_vec(line_pts, node)
                 if line_vec not in line_vec_list:
@@ -236,7 +251,7 @@ def get_node_list(ball_list, node_dict, ball_line_dict):
                 line_vec_list_tmp = []
                 for pair in itertools.combinations(line_vec_list, 2):
                     dot = np.dot(np.array(pair[0]), np.array(pair[1]))
-                    print 'dot product of ', pair, ' is ', dot
+                    # print 'dot product of ', pair, ' is ', dot
                     if dot < 0.1:
                         line_vec_list_tmp.append(pair[0])
                         line_vec_list_tmp.append((-1*np.array(pair[0])).tolist())
@@ -244,7 +259,7 @@ def get_node_list(ball_list, node_dict, ball_line_dict):
                         line_vec_list_tmp.append((-1*np.array(pair[1])).tolist())
                         line_vec_list = line_vec_list_tmp
                         break
-            node_dict["%f_%f"%(float(node[0]), float(node[1]))] = ["X", line_vec_list]
+            node_dict["%f_%f"%(float(node[0]), float(node[1]))] = ["X", line_vec_list, pt_list]
             continue
     return node_list, node_dict
 
@@ -263,7 +278,7 @@ def get_line_vec(ball_list, ball_line_dict):
                 line_vec = line_vec.tolist()
 
                 line_vec_list_tmp.append(line_vec)
-        print 'number of lines: ', len(line_vec_list_tmp)
+        # print 'number of lines: ', len(line_vec_list_tmp)
         line_vec_list.append(line_vec_list_tmp)
     return line_vec_list
 
@@ -292,12 +307,116 @@ def plot_node(node_dict):
             ax.add_artist(arrow)
     ax.scatter(x_list,y_list,c=color)
 
-def get_intersection(map_pts, line_map):
+def update_anim(num):
+    global lane_probe, probe_plot
+    if type(lane_probe) == shapely.geometry.linestring.LineString:
+        x,y = lane_probe.coords.xy
+        x = np.array([x[0],x[1]])
+        y = np.array([y[0],y[1]])
+        probe_plot.set_data(x,y)
+    return probe_plot,
+
+def nodeidx_to_edgeidx(node_idx_1, node_idx_2, dist):
+    node_idx = str(node_idx_1) + str(node_idx_2) + str(dist)
+    edge_idx = [s for s in str(node_idx) if s.isdigit()]
+    edge_idx_tmp = []
+    for sublist in edge_idx:
+        for item in sublist:
+            if type(item) == str:
+                for c in item:
+                    edge_idx_tmp.append(c)
+    edge_idx_tmp.sort(key=int)
+    edge_idx_ret = ""
+    for c in edge_idx_tmp:
+        edge_idx_ret += c
+    return edge_idx_ret
+
+def create_node_graph(node_dict, line_map, ball_line_dict):
+    global lane_width, lane_probe
+    global ax
+    G = nx.Graph()
+    node_idx = 0
+    node_ball_list = []
+    graph_edges = {}
+    for node, val in node_dict.items():
+        x,y = node.split("_")
+        x = float(eval(x))
+        y = float(eval(y))
+        node_idx = str(round(x,2))+str(round(y,2))
+        ax.text(x,y,"%s"%node_idx, fontsize=15)
+        G.add_node(node_idx, pos=[x,y], val=val)
+        ball = Point(x,y).buffer(lane_width/2.0)
+        node_ball_list.append(ball)
+    for node_idx, node_data in G.nodes(data=True):
+        print 'The ', node_idx, ' node: ', node_data["val"][1]
+        node_pos = node_data["pos"]
+        node_val = node_data["val"]
+        for vec in node_val[1]:
+            hit = 0
+            probe_length = 0
+            node_hit = 0
+            while hit == 0:
+                probe_length += lane_width
+                target = np.array(node_pos) + probe_length*np.array(vec)
+                target = tuple(target.tolist())
+                probe = LineString([tuple(node_pos), target])
+                lane_probe = probe
+                # print 'probe: ', probe
+                for line in line_map:
+                    if probe.intersects(line):
+                        hit = 1
+                        break
+                for ball_hit in node_ball_list:
+                    ball_x, ball_y = ball_hit.centroid.xy
+                    error = np.sqrt((ball_x[0]-node_pos[0])**2+(ball_y[0]-node_pos[1])**2)
+                    if error < 0.1:
+                        continue
+                    if probe.intersects(ball_hit):
+                        hit = 1
+                        ball_x, ball_y = ball_hit.centroid.xy
+                        node_hit = [ball_x[0],ball_y[0]]
+                        node_hit_idx = str(round(ball_x[0],2))+str(round(ball_y[0],2))
+                        break
+            if G.has_node(node_hit_idx):
+                print 'graph has node: ', node_hit_idx
+                nb_pos = G.nodes[node_hit_idx]['pos']
+                dist = np.array(node_pos) - np.array(nb_pos)
+                mid = np.array(nb_pos) + dist/2.0
+                dist = np.linalg.norm(dist)
+                ax.text(mid[0],mid[1],"%f"%dist, fontsize=10)
+                G.add_edge(node_idx, node_hit_idx, dist=dist)
+                edge = LineString([tuple(node_pos), tuple(nb_pos)])
+                edge_idx = nodeidx_to_edgeidx(node_idx, node_hit_idx, dist)
+                graph_edges[edge_idx] = edge
+            else:
+                print 'node hit: ', node_hit
+                if type(node_hit) == list:
+                    for nb_idx, nb_data in G.nodes(data=True):
+                        if nb_idx == node_idx:
+                            continue
+                        # print 'checking ', nb_idx, ' my idx: ', node_idx
+                        error = np.linalg.norm(np.array(node_hit) - np.array(nb_data['pos']))
+                        # print 'nb position: ', nb_data['pos']
+                        # print 'position error: ',error
+                        if error < 0.1:
+                            dist = np.array(node_pos) - np.array(nb_data['pos'])
+                            mid = np.array(nb_data['pos']) + dist/2.0
+                            dist = np.linalg.norm(dist)
+                            ax.text(mid[0],mid[1],"%f"%dist, fontsize=10)
+                            G.add_edge(node_idx, nb_idx, dist=dist)
+                            edge = LineString([tuple(node_pos), tuple(nb_data['pos'])])
+                            edge_idx = nodeidx_to_edgeidx(node_idx, nb_idx, dist)
+                            graph_edges[edge_idx] = edge
+                            break
+    return G, graph_edges
+
+def get_map_graph(map_pts, line_map):
     global lane_width
     radius = (lane_width+0.05)/2.0*np.sqrt(2)
     ball_list = []
     ball_line_dict = {}
     node_dict = {}
+    map_edges = []
     for pt in map_pts:
         ball = Point(pt[0], pt[1]).buffer(radius)
         line_list = get_ball_line(ball, line_map)
@@ -305,17 +424,209 @@ def get_intersection(map_pts, line_map):
         ball_list = check_ball_list(ball, ball_list, ball_line_dict)
     plot_ball_list(ball_list, radius)
     node_list, node_dict = get_node_list(ball_list, node_dict, ball_line_dict)
-    # line_vec_list = get_line_vec(ball_list, ball_line_dict)
     plot_node(node_dict)
+    graph, map_edges = create_node_graph(node_dict, line_map, ball_line_dict)
+    return graph, map_edges
 
+def dist_pt_line(pt, line_pt, line_slope):
+    a = np.array(line_pt)
+    n = np.array(line_slope)
+    p = np.array(pt)
+    dist = (a-p)-np.dot(n, (a-p))*n
+    dist = np.linalg.norm(dist)
+    return dist
+
+def find_nearby_nodes(start, map_graph, map_edges):
+    global lane_width
+    node_idx_list = []
+    ball = Point(start[0], start[1]).buffer(lane_width/2.0)
+    dist_min = lane_width*1000
+    for key,line in map_edges.items():
+        if ball.intersects(line):
+            x,y = line.xy
+            p0 = [x[0],y[0]]
+            p1 = [x[1],y[1]]
+            line_slope = np.array(p1) - np.array(p0)
+            line_slope = line_slope/np.linalg.norm(line_slope)
+            dist = dist_pt_line(np.array(start), p0, line_slope)
+            if dist < dist_min:
+                dist_min = dist
+                idx0 = str(round(x[0],2))+str(round(y[0],2))
+                idx1 = str(round(x[1],2))+str(round(y[1],2))
+                node_idx_list = [idx0, idx1]
+                if dist < lane_width/2.0:
+                    return node_idx_list
+    return node_idx_list
+
+def find_path(start, end, orient, map_graph, map_edges):
+    path_ret = []
+    orient = np.array(orient)
+    orient = orient/np.linalg.norm(orient)
+    dist_min = lane_width*10000
+    start_node_idx_list = find_nearby_nodes(start, map_graph, map_edges)
+    end_node_idx_list = find_nearby_nodes(end, map_graph, map_edges)
+    start_idx = 0
+    start_node = []
+    start_dist = 0
+    dot_min = 999
+    for start_idx_tmp in start_node_idx_list:
+        start_node_tmp = map_graph.nodes[start_idx_tmp]
+        start_node_pos = start_node_tmp['pos']
+        start_dist_vec = np.array(start_node_pos) - np.array(start)
+        start_dist_tmp = np.linalg.norm(start_dist_vec)
+        start_dist_vec = start_dist_vec/start_dist_tmp
+        dot = np.dot(start_dist_vec, orient)
+        if dot > 0 and dot < dot_min:
+            dot_min = dot
+            start_idx = start_idx_tmp
+            start_node = start_node_tmp
+            start_dist = start_dist_tmp
+    for end_idx in end_node_idx_list:
+        end_node = map_graph.nodes[end_idx]
+        end_node_pos = end_node['pos']
+        print 'start_dist: ', start_dist
+        end_dist = np.array(end_node_pos) - np.array(end)
+        end_dist = np.linalg.norm(end_dist)
+        print 'end_dist: ', end_dist
+        path_dist = nx.shortest_path_length(map_graph, source=start_idx, target=end_idx, weight="dist")
+        dist = path_dist + start_dist + end_dist
+        print 'total dist: ', dist
+        if dist < dist_min:
+            dist_min = dist
+            path_ret = my_shortest_path(map_graph, source=start_idx, target=end_idx, weight="dist", orient=orient, stop_pt=end)
+    return path_ret
+
+def my_single_source_dijkstra(G, source, target=None, cutoff=None, weight='weight', orient=None, stop_pt=None):
+    if source == target:
+        return ({source: 0}, {source: [source]})
+    push = heappush
+    pop = heappop
+    dist = {}  # dictionary of final distances
+    paths = {source: [source]}  # dictionary of paths
+    seen = {source: 0}
+    c = count()
+    fringe = []  # use heapq with (distance,label) tuples
+    push(fringe, (0, next(c), source, orient))
+    while fringe:
+        (d, _, v, orient_tmp) = pop(fringe)
+        print 'vertex? ', v
+        if v in dist:
+            continue  # already searched this node.
+        dist[v] = d
+        if v == target:
+            break
+        v_pos = G.nodes[v]['pos']
+        # for ignore,w,edgedata in G.edges_iter(v,data=True):
+        # is about 30% slower than the following
+        if G.is_multigraph():
+            edata = []
+            for w, keydata in G[v].items():
+                minweight = min((dd.get(weight, 1)
+                                 for k, dd in keydata.items()))
+                edata.append((w, {weight: minweight}))
+        else:
+            edata = iter(G[v].items())
+        print 'G[v]: ', G[v]
+        for w, edgedata in edata:
+            print 'edata w:', w, ' edata edgedata: ', edgedata
+            vw_dist = dist[v] + edgedata.get(weight, 1)
+            w_orient = orient_tmp
+            if orient is not None:
+                w_pos = G.nodes[w]['pos']
+                w_orient = np.array(w_pos) - np.array(v_pos)
+                w_orient = w_orient/np.linalg.norm(w_orient)
+                dot = np.dot(orient_tmp, w_orient)
+                print 'dot wv: ', dot
+                if dot <= -0.5:
+                    print 'not right'
+                    continue
+            if cutoff is not None:
+                if vw_dist > cutoff:
+                    continue
+            if w in dist:
+                if vw_dist < dist[w]:
+                    raise ValueError('Contradictory paths found:',
+                                     'negative weights?')
+            elif w not in seen or vw_dist < seen[w]:
+                seen[w] = vw_dist
+                push(fringe, (vw_dist, next(c), w, w_orient))
+                paths[w] = paths[v] + [w]
+    return (dist, paths)
+
+def my_dijkstra_path(G, source, target, weight='weight', orient=None, stop_pt=None):
+    (length, path) = my_single_source_dijkstra(G, source, target=target, weight=weight, orient=orient, stop_pt=stop_pt)
+    try:
+        return path[target]
+    except KeyError:
+        raise nx.NetworkXNoPath(
+            "node %s not reachable from %s" % (source, target))
+
+def my_shortest_path(G, source=None, target=None, weight=None, orient=None, stop_pt=None):
+    if source is None:
+        if target is None:
+            ## Find paths between all pairs.
+            if weight is None:
+                paths=nx.all_pairs_shortest_path(G)
+            else:
+                paths=nx.all_pairs_dijkstra_path(G,weight=weight)
+        else:
+            ## Find paths from all nodes co-accessible to the target.
+            with nx.utils.reversed(G):
+                if weight is None:
+                    paths=nx.single_source_shortest_path(G, target)
+                else:
+                    paths=nx.single_source_dijkstra_path(G, target, weight=weight)
+
+                # Now flip the paths so they go from a source to the target.
+                for target in paths:
+                    paths[target] = list(reversed(paths[target]))
+
+    else:
+        if target is None:
+            ## Find paths to all nodes accessible from the source.
+            if weight is None:
+                paths=nx.single_source_shortest_path(G,source)
+            else:
+                paths=nx.single_source_dijkstra_path(G,source,weight=weight)
+        else:
+            ## Find shortest source-target path.
+            if weight is None:
+                paths=nx.bidirectional_shortest_path(G,source,target)
+            else:
+                if orient is None:
+                    paths=nx.dijkstra_path(G,source,target,weight)
+                else:
+                    paths=my_dijkstra_path(G,source,target,weight,orient=orient, stop_pt=stop_pt)
+
+    return paths
+
+def plot_path(source, target, path, map_graph):
+    global ax
+    line_pts = []
+    p_prev = tuple(source)
+    for p in path:
+        node_pos_tmp = tuple(map_graph.nodes[p]['pos'])
+        line_pts.append([p_prev, node_pos_tmp])
+        p_prev = node_pos_tmp
+    line_pts.append([p_prev, tuple(target)])
+    lineCol = mc.LineCollection(line_pts, color="r", linewidths=2)
+    ax.add_collection(lineCol)
 
 if __name__ == '__main__':
     fig = plt.figure()
     ax = plt.axes(xlim=(-3,5), ylim=(-1,8))
     node_plot, = ax.plot([], [], color='b', alpha=0.5, fillstyle='full',
         linewidth=3, solid_capstyle='round')
+    probe_plot, = ax.plot([], [], color='r', alpha=0.5, fillstyle='full',
+        linewidth=3, solid_capstyle='round')
     line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1))
     map_pts = get_map_pts(map_poly)
-    intersection = get_intersection(map_pts, line_map)
-    plot_line(line_map)
+    visual_thread = Visualize()
+    map_graph, map_edges = get_map_graph(map_pts, line_map)
+    source = [0.79,4.03]
+    target = [2.05, 3.8]
+    orient = [-0.5, 1]
+    path = find_path(source, target, orient, map_graph, map_edges)
+    print path
+    plot_path(source, target, path, map_graph)
     plt.show()
