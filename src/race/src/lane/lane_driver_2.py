@@ -60,12 +60,22 @@ car_pos = [0,0]
 car_orient = [1,0]
 car_orient_prev = [1,0]
 imu_orient = [1,0] # Inital direction is along the x-axis
+car_x_off = car_y_off = car_ang_off = 0.0
+ell_list = []
+
 odom_pos = [0,0] # odom_pos is the odometry data, NOT the exact position
 odom_pos_prev = [0,0]
 odom_pos_tmp = [0,0] 
 odom_orient_tmp = [1,0]
-car_x_off = car_y_off = car_ang_off = 0.0
-ell_list = []
+odom_pos_1 = [0,0] # odom_pos is the odometry data, NOT the exact position
+odom_pos_prev_1 = [0,0]
+odom_pos_tmp_1 = [0,0] 
+odom_orient_tmp_1 = [1,0]
+odom_pos_2 = [0,0] # odom_pos is the odometry data, NOT the exact position
+odom_pos_prev_2 = [0,0]
+odom_pos_tmp_2 = [0,0] 
+odom_orient_tmp_2 = [1,0]
+odom_orient_prev = 1j
 
 # Initialize FOV
 FOV = Polygon([(0,0),(0.75,0.59),(0.75,-0.59)])
@@ -121,7 +131,6 @@ imu_now_time = 0
 imu_prev_time = 0
 imu_vel = [0,0]
 imu_ang = 0
-imu_ang_prev = 1j
 pred_distrib = [[0,0],0,0,0]
 
 # Initialize PID control errors
@@ -161,7 +170,9 @@ class Update (threading.Thread):
         global turning, turning_complete, turning_start
         global driver, drive_pub
         global left_lane, right_lane, left_lane_turn, right_lane_turn, left_probe, right_probe, off_lane, off_lane_toggle, update_toggle
-        global imu_ang, imu_ang_prev, e_p, e_d, e_i
+        global imu_ang, odom_pos_prev, e_p, e_d, e_i
+        global odom_pos, odom_pos_prev, odom_pos_tmp, odom_orient_tmp, odom_orient_prev
+        global odom_pos_1, odom_pos_prev_1, odom_pos_tmp_1, odom_orient_tmp_1, odom_pos_2, odom_pos_prev_2, odom_pos_tmp_2, odom_orient_tmp_2
 
         update_debug.publish('Start update')
 
@@ -198,27 +209,31 @@ class Update (threading.Thread):
                     e_d = 0
                 
                 # Turning update
-                try:
-                    imu_ang_diff = abs(imu_ang - imu_ang_prev)
-                    orient_debug.publish('IMU angle difference: %f' % np.degrees(imu_ang_diff))
+                # try:
+                #     odom_ang_diff = abs(imu_ang - imu_ang_prev)
+                #     orient_debug.publish('IMU angle difference: %f' % np.degrees(odom_ang_diff))
+                #     orient_debug.publish('turning: %d | turning_complete: %d' % (turning, turning_complete))
+                # except:
+                #     odom_ang_diff = 999999
+                #     pass
+                odom_ang_diff = 0
+                if type(odom_orient_prev) == list or type(odom_orient_prev) == np.ndarray:
+                    odom_ang_diff = find_ang(np.array(odom_orient_tmp), np.array(odom_orient_prev))
+                    orient_debug.publish('Angle difference: %f' % np.degrees(odom_ang_diff))
                     orient_debug.publish('turning: %d | turning_complete: %d' % (turning, turning_complete))
-                except:
-                    imu_ang_diff = 999999
-                    pass
                 if turning_complete != 0:
                     # check the IMU to see if the car has turned much
-                    imu_ang_diff = abs(imu_ang - imu_ang_prev)
-                    if imu_ang_diff > np.radians(60):
+                    if odom_ang_diff > np.radians(60):
                         print '-------------------TURNING COMPLETED-----------------'
                         update_toggle = [1,1,1]
                         turning_complete_update()
-                        imu_ang_prev = 1j
+                        odom_orient_prev = 1j
                         # Reset error
                         e_p = 0
                         e_i = 0
                         e_d = 0
                     turning_complete = 0
-                elif turning == 0 or imu_ang_diff < 0.5:
+                elif turning == 0 or odom_ang_diff < 0.5:
                     update_probes()
                     update_debug.publish('Updating probes complete.')
                     update_env()
@@ -227,7 +242,7 @@ class Update (threading.Thread):
                     update_debug.publish('Updating left right complete: %s' % str(update_toggle))
                     find_intersection()
                     update_debug.publish('Updating intersection complete: %s' % str(update_toggle))
-                    if imu_ang_prev == 1j:
+                    if odom_orient_prev == 1j:
                         # Update the camera shift only after complete turnings
                         update_debug.publish('Updating camera shift')
                         cam_correct_pose()
@@ -256,52 +271,71 @@ class Localize (threading.Thread):
         localize_debug.publish('Start localize')
 
         while True:
-            if START == 1 and init > 3:
-                global imu_lin_accel, odom_pos, odom_pos_prev, odom_pos_tmp, odom_orient_tmp, imu_ang_vel, dt_pred, car_pos_pred, turning
-                # if odom_pos doesn't change and IMU linear acceleration is not super small:
-                # Integrate ahead your pose_distrib and append those shapes into a list
-                # Once the odom_pos changes, if it falls into the list of pose_distrib, then update
-                # the odom_pos as the car_pos
-                localize_debug.publish('start localizing ? odom_pos: %s | odom_pos_prev: %s' % (str(odom_pos), str(odom_pos_prev)))
-                if odom_pos != odom_pos_prev:
-                    orient = np.array(car_orient)/np.linalg.norm(car_orient)
-                    w0 = 1 # weight of center offset
-                    car_pos_pred = predict_pos(car_pos, car_orient)
-                    localize_debug.publish('car_pos_pred: %s | odom_pos: %s' % (str(car_pos_pred), str(odom_pos)))
-                    pos_diff = np.array(car_pos_pred) - np.array(odom_pos)
-                    pos_diff_norm = np.linalg.norm(pos_diff)
-                    if turning != 0:
-                        pos_weight = gauss_distrib(pos_diff_norm, 0, 1/(2*np.pi), 5)
-                    else:
-                        pos_weight = gauss_distrib(pos_diff_norm, 0, 1/(2*np.pi), 3)
-                    localize_debug.publish('pos_diff_norm: %f | pos_weight: %f' % (pos_diff_norm, pos_weight))
-                    car_pos = np.array(odom_pos) + pos_weight*np.array(pos_diff) + w0*offset*np.array(orient)
+            if START == 1:
+                global imu_lin_accel, odom_pos, odom_pos_prev, odom_pos_tmp, odom_orient_tmp, odom_orient_prev, imu_ang_vel, dt_pred, car_pos_pred, turning
+                global odom_pos_1, odom_pos_prev_1, odom_pos_tmp_1, odom_orient_tmp_1, odom_pos_2, odom_pos_prev_2, odom_pos_tmp_2, odom_orient_tmp_2
+                odom_pos = (np.array(odom_pos_1) + np.array(odom_pos_2))/2.0
+                odom_pos = odom_pos.tolist()
+                odom_orient_tmp = np.array(odom_pos_1) - np.array(odom_pos_2)
+                odom_orient_tmp = odom_orient_tmp/np.linalg.norm(odom_orient_tmp)
+                odom_orient_tmp = odom_orient_tmp.tolist()
+                orient_debug.publish("odom_orient_tmp: %s" % str(odom_orient_tmp))
+                if init < 2:
+                    car_pos = odom_pos
+                elif init <= 3:
+                    global prev_pos
+                    # Updating stage
+                    vec = np.array(odom_pos) - np.array(prev_pos)
+                    dist = np.linalg.norm(vec)
+                    if dist <= 0.75:
+                        car_pos = odom_pos
+                elif init > 3:
+                    # if odom_pos doesn't change and IMU linear acceleration is not super small:
+                    # Integrate ahead your pose_distrib and append those shapes into a list
+                    # Once the odom_pos changes, if it falls into the list of pose_distrib, then update
+                    # the odom_pos as the car_pos
+                    localize_debug.publish('start localizing ? odom_pos: %s | odom_pos_prev: %s' % (str(odom_pos), str(odom_pos_prev)))
+                    if odom_pos != odom_pos_prev:
+                        orient = np.array(car_orient)/np.linalg.norm(car_orient)
+                        w0 = 1 # weight of center offset
+                        car_pos_pred = predict_pos(car_pos, car_orient)
+                        localize_debug.publish('car_pos_pred: %s | odom_pos: %s' % (str(car_pos_pred), str(odom_pos)))
+                        pos_diff = np.array(car_pos_pred) - np.array(odom_pos)
+                        pos_diff_norm = np.linalg.norm(pos_diff)
+                        if turning != 0:
+                            pos_weight = gauss_distrib(pos_diff_norm, 0, 1/(2*np.pi), 5)
+                        else:
+                            pos_weight = gauss_distrib(pos_diff_norm, 0, 1/(2*np.pi), 3)
+                        localize_debug.publish('pos_diff_norm: %f | pos_weight: %f' % (pos_diff_norm, pos_weight))
+                        car_pos = np.array(odom_pos) + pos_weight*np.array(pos_diff)
 
-                    # camera position offset
-                    w1 = np.linalg.norm(np.array(cam_pos_shift)) # weight of cam_pos_shift
-                    w1 = gauss_distrib(w1, 0, 1/(2*np.pi), 10)
-                    localize_debug.publish('cam_pos_shift: %s | weight: %f' % (str(cam_pos_shift), w1))
-                    car_pos += w1*np.array(cam_pos_shift)
-                    car_pos = car_pos.tolist()
-                    localize_debug.publish('car_pos updated: %s' % str(car_pos))
-                    # Update orientation
-                    # imu_orient = rotate_by_rad(car_orient, imu_ang_vel*dt_pred)
-                    # localize_debug.publish('imu orient: %s' % str(imu_orient))
-                    car_orient_pred = predict_orient(car_orient)
-                    localize_debug.publish('car_orient_pred: %s' % str(car_orient_pred))
-                    # check = check_orient_pred(car_orient_pred)
-                    # car_orient = (1-check)*np.array(car_orient) + check*np.array(car_orient_pred)
-                    car_orient = check_orient_pred(car_orient_pred)
-                    car_orient = car_orient.tolist()
-                    odom_pos_prev = odom_pos
-                if type(car_orient) == np.ndarray:
-                    car_orient = car_orient.tolist()
-                visual_pub_car.publish("[%s, %s, %s]" % (str(car_pos), str(car_orient), str(pred_distrib)))
+                        # camera position offset
+                        w1 = np.linalg.norm(np.array(cam_pos_shift)) # weight of cam_pos_shift
+                        w1 = gauss_distrib(w1, 0, 1/(2*np.pi), 10)
+                        localize_debug.publish('cam_pos_shift: %s | weight: %f' % (str(cam_pos_shift), w1))
+                        car_pos += w1*np.array(cam_pos_shift)
+                        car_pos = car_pos.tolist()
+                        localize_debug.publish('car_pos updated: %s' % str(car_pos))
+                        # Update orientation
+                        # imu_orient = rotate_by_rad(car_orient, imu_ang_vel*dt_pred)
+                        # localize_debug.publish('imu orient: %s' % str(imu_orient))
+                        car_orient_pred = predict_orient(car_orient)
+                        car_orient_pred = check_orient_pred(car_orient_pred)
+                        # check = check_orient_pred(car_orient_pred)
+                        # car_orient = (1-check)*np.array(car_orient) + check*np.array(car_orient_pred)
+                        # car_orient = check_orient_pred(car_orient_pred)
+                        car_orient = 0.8*np.array(odom_orient_tmp) + 0.2*np.array(car_orient_pred)
+                        car_orient = car_orient.tolist()
+                        odom_pos_prev = odom_pos
+                        localize_debug.publish('car_orient_pred: %s | odom_orient_tmp: %s' % (str(car_orient_pred), str(odom_orient_tmp)))
+                    if type(car_orient) == np.ndarray:
+                        car_orient = car_orient.tolist()
+                    visual_pub_car.publish("[%s, %s, %s]" % (str(car_pos), str(car_orient), str(pred_distrib)))
 
-                if turning_complete == 0 and turning == 0 and off_lane == 0:
-                    # control using PID
-                    update_pid_error()
-                    PID()
+                    if turning_complete == 0 and turning == 0 and off_lane == 0:
+                        # control using PID
+                        update_pid_error()
+                        PID()
 
 class Navigate (threading.Thread):
     def __init__(self):
@@ -1309,7 +1343,7 @@ def turning_complete_update():
     global driver, drive_pub
     global left_lane, right_lane, left_lane_pts, right_lane_pts
     global left_lane_turn, right_lane_turn, lane_predict, update_toggle
-    global imu_ang, imu_ang_prev
+    global imu_ang, odom_orient_prev
 
     turn = turning_complete
     update_toggle = [1,1,1]
@@ -1483,7 +1517,7 @@ def check_orient_pred(orient_pred):
     check = abs(imu_ang_vel*dt_imu - pred_ang_diff)
     check = gauss_distrib(check, 0, 1/(2*np.pi), 50)
     orient_ret = check*np.array(orient_pred) + (1-check)*np.array(imu_orient)
-    orient_debug.publish('orient_ret: %s | orient_pred: %s | imu_orient: %s | pred_ang_diff: %f| imu_ang_vel: %f| dt_imu: %f | imu_ang_diff: %f | check: %f' 
+    orient_debug.publish('orient_ret: %s | orient_pred: %s | imu_orient: %s | pred_ang_diff: %f| imu_ang_vel: %f| dt_imu: %f | odom_ang_diff: %f | check: %f' 
         % ( str(orient_ret), str(orient_pred), str(imu_orient), pred_ang_diff, imu_ang_vel, dt_imu, imu_ang_vel*dt_imu, check))
     return orient_ret
 
@@ -2113,8 +2147,10 @@ def navigate():
     global env_lines
     global driver, driver_pub
     global turning, turning_complete, left_lane_turn, right_lane_turn
-    global imu_ang, imu_ang_prev
+    global imu_ang, odom_orient_prev
     global lane_predict, off_lane, off_lane_toggle
+    global odom_pos, odom_pos_prev, odom_pos_tmp, odom_orient_tmp
+    global odom_pos_1, odom_pos_prev_1, odom_pos_tmp_1, odom_orient_tmp_1, odom_pos_2, odom_pos_prev_2, odom_pos_tmp_2, odom_orient_tmp_2
 
     if print_main == 1:
         print '------------------------- START NAVIGATE --------------------------'
@@ -2149,9 +2185,9 @@ def navigate():
                 driver.angle = 0
                 drive_pub.publish(driver)
                 turning = 1
-                if imu_ang_prev == 1j:
-                    imu_ang_prev = imu_ang
-                    orient_debug.publish('Starting IMU angle prev: %f' % imu_ang_prev)
+                if odom_orient_prev == 1j:
+                    odom_orient_prev = odom_orient_tmp
+                    orient_debug.publish('Starting IMU angle prev: %s' % str(odom_orient_prev))
                 break
         if turning == 1:
             turning = 0
@@ -2326,11 +2362,11 @@ def navigate():
         # Check if car_orient is aligned with lane_predict
         print 'Going forward ?'
         
-        imu_ang_diff = 0
-        if type(imu_ang_prev) == float:
-            imu_ang_diff = abs(imu_ang - imu_ang_prev)
+        odom_ang_diff = 0
+        if type(odom_orient_prev) == list or type(odom_orient_prev) == np.ndarray:
+            odom_ang_diff = find_ang(np.array(odom_orient_tmp), np.array(odom_orient_prev))
         if turning == 2:
-            if abs(imu_ang_diff) > np.radians(80.0) and type(cam_right_line) == list:
+            if abs(odom_ang_diff) > np.radians(80.0) and type(cam_right_line) == list:
                 orient_debug.publish("Go ahead because turned enough angle and see right lane")
                 print 'Go ahead'
                 driver.velocity = 16
@@ -2355,8 +2391,8 @@ def navigate():
                         turning_complete = turning
                         turning = 0
                         return
-                    # check imu_ang_diff and probes
-                    if abs(imu_ang_diff) > np.radians(80.0):
+                    # check odom_ang_diff and probes
+                    if abs(odom_ang_diff) > np.radians(80.0):
                         # if right_probe intersects any predicted lane
                         left_line_string = LineString([tuple(left_lane[0]), tuple(left_lane[1])])
                         if right_probe.intersects(left_line_string):
@@ -2383,7 +2419,7 @@ def navigate():
             except:
                 pass
         if turning == 3:
-            if abs(imu_ang_diff) > np.radians(80.0) and type(cam_left_line) == list:
+            if abs(odom_ang_diff) > np.radians(80.0) and type(cam_left_line) == list:
                 orient_debug.publish("Go ahead because turned enough angle and see left lane")
                 print 'Go ahead'
                 driver.velocity = 16
@@ -2406,8 +2442,8 @@ def navigate():
                         turning_complete = turning
                         turning = 0
                         return
-                    # check imu_ang_diff and probes
-                    if abs(imu_ang_diff) > np.radians(80.0):
+                    # check odom_ang_diff and probes
+                    if abs(odom_ang_diff) > np.radians(80.0):
                         # if left_probe intersects any predicted lane
                         right_line_string = LineString(tuple(right_lane[0]), tuple(right_lane[1]))
                         if left_probe.intersects(right_line_string):
@@ -2516,8 +2552,9 @@ def joy_callback(joy_data):
     global left_lane, right_lane, left_lane_pts, right_lane_pts, lane_predict, off_lane, off_lane_toggle, update_toggle
     global car_x_off, car_y_off, car_ang_off, pred_distrib
     global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line, cam_pos_shift
-    global odom_pos, odom_pos_prev, odom_pos_tmp, e_p, e_p_prev, e_d, e_i
-    global imu_lin_accel, imu_ang_vel, imu_vel, imu_now_time, imu_prev_time, imu_vel, imu_ang, imu_ang_prev
+    global odom_pos, odom_pos_prev, odom_pos_tmp, odom_orient_tmp, e_p, e_p_prev, e_d, e_i
+    global odom_pos_1, odom_pos_prev_1, odom_pos_tmp_1, odom_orient_tmp_1, odom_pos_2, odom_pos_prev_2, odom_pos_tmp_2, odom_orient_tmp_2
+    global imu_lin_accel, imu_ang_vel, imu_vel, imu_now_time, imu_prev_time, imu_vel, imu_ang, odom_orient_prev
 
     # RB
     if (joy_data.buttons[5] == 1):
@@ -2546,6 +2583,15 @@ def joy_callback(joy_data):
             odom_pos_prev = [0,0]
             odom_pos_tmp = [0,0] # odom_pos is the odometry data, NOT the exact position
             odom_orient_tmp = [1,0]
+            odom_pos_1 = [0,0]
+            odom_pos_prev_1 = [0,0]
+            odom_pos_tmp_1 = [0,0] # odom_pos is the odometry data, NOT the exact position
+            odom_orient_tmp_1 = [1,0]
+            odom_pos_2 = [0,0]
+            odom_pos_prev_2 = [0,0]
+            odom_pos_tmp_2 = [0,0] # odom_pos is the odometry data, NOT the exact position
+            odom_orient_tmp_2 = [1,0]
+            odom_orient_prev = 1j
             ell_list = []
             if type(car_orient) == np.ndarray:
                 car_orient = car_orient.tolist()
@@ -2573,7 +2619,6 @@ def joy_callback(joy_data):
             imu_prev_time = 0
             imu_vel = [0,0]
             imu_ang = 0
-            imu_ang_prev = 1j
 
             # Reset PID control errors
             e_p = 0 # Cross track error
@@ -2705,24 +2750,30 @@ def callback(odom):
             odom_pos_prev = odom_pos
 
 # Obtaining the car's location
-def callback_tag(data):
-    global START, odom_pos
-    global car_pos, prev_pos
+def callback_tag_1(data):
+    global START, odom_pos_1
+    global car_pos
 
     odom = eval(data.data)[0]
-
     if START == 1:
-        odom_pos = [odom[0],odom[1]]
+        odom_pos_1 = [odom[0],odom[1]]
         # Initializing stage:
-        if init < 2:
-            car_pos = odom_pos
-        elif init <= 3:
-            global prev_pos
-            # Updating stage
-            vec = np.array(odom_pos) - np.array(prev_pos)
-            dist = np.linalg.norm(vec)
-            if dist <= 0.75:
-                car_pos = odom_pos
+        # if init < 2:
+        #     car_pos = odom_pos_1
+        # elif init <= 3:
+        #     global prev_pos
+        #     # Updating stage
+        #     vec = np.array(odom_pos_1) - np.array(prev_pos)
+        #     dist = np.linalg.norm(vec)
+        #     if dist <= 0.75:
+        #         car_pos = odom_pos_1
+
+def callback_tag_2(data):
+    global START, odom_pos_2
+    global car_pos
+    odom = eval(data.data)[0]
+    if START == 1:
+        odom_pos_2 = [odom[0],odom[1]]
 
 rospy.init_node('lane_driver', anonymous=True)
 
@@ -2768,11 +2819,11 @@ threads.append(localize_thread)
 if __name__ == '__main__':
 
     rospy.Subscriber("joy", Joy, joy_callback)
-    # rospy.Subscriber('odometry/filtered', Odometry, callback)
     rospy.Subscriber('line_cnt/slope', String, callback_camera)
     rospy.Subscriber('imu_transformed_1', Imu, callback_imu)
     rospy.Subscriber("drive_param_fin", drive_param, callback_param)
-    rospy.Subscriber("DecaWave_tag", String, callback_tag)
+    rospy.Subscriber("DecaWave_tag_1", String, callback_tag_1)
+    rospy.Subscriber("DecaWave_tag_2", String, callback_tag_2)
 
     # Initialize the map
     map_path = '/home/antonio/catkin_ws/src/race/src/map/map.txt'
