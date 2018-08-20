@@ -24,6 +24,7 @@ from networkx.utils import generate_unique_node
 
 map_path = '/home/antonio/catkin_ws/src/race/src/map/map_2.txt'
 lane_width = 0.6
+turning_radius = 0.6
 lane_probe = 0
 # Map parameters that determine the size and orientation of the map
 p0 = [3.75, 4.66]
@@ -127,8 +128,7 @@ def check_ball_list(ball, ball_list, ball_line_dict):
 
     return ball_list_ret
 
-def plot_ball_list(ball_list, radius):
-    global ax
+def plot_ball_list(ball_list, radius, ax):
     for i in range(len(ball_list)):
         color = float(i)/len(ball_list)
         color = (1-0.1*color,0.5*color,0.6*color)
@@ -282,8 +282,7 @@ def get_line_vec(ball_list, ball_line_dict):
         line_vec_list.append(line_vec_list_tmp)
     return line_vec_list
 
-def plot_node(node_dict):
-    global ax
+def plot_node(node_dict, ax):
     x_list = []
     y_list = []
     color = []
@@ -331,9 +330,8 @@ def nodeidx_to_edgeidx(node_idx_1, node_idx_2, dist):
         edge_idx_ret += c
     return edge_idx_ret
 
-def create_node_graph(node_dict, line_map, ball_line_dict):
+def create_node_graph(node_dict, line_map, ball_line_dict, ax=None):
     global lane_width, lane_probe
-    global ax
     G = nx.Graph()
     node_idx = 0
     node_ball_list = []
@@ -343,7 +341,8 @@ def create_node_graph(node_dict, line_map, ball_line_dict):
         x = float(eval(x))
         y = float(eval(y))
         node_idx = str(round(x,2))+str(round(y,2))
-        ax.text(x,y,"%s"%node_idx, fontsize=15)
+        if ax is not None:
+            ax.text(x,y,"%s"%node_idx, fontsize=15)
         G.add_node(node_idx, pos=[x,y], val=val)
         ball = Point(x,y).buffer(lane_width/2.0)
         node_ball_list.append(ball)
@@ -383,7 +382,8 @@ def create_node_graph(node_dict, line_map, ball_line_dict):
                 dist = np.array(node_pos) - np.array(nb_pos)
                 mid = np.array(nb_pos) + dist/2.0
                 dist = np.linalg.norm(dist)
-                ax.text(mid[0],mid[1],"%f"%dist, fontsize=10)
+                if ax is not None:
+                    ax.text(mid[0],mid[1],"%f"%dist, fontsize=10)
                 G.add_edge(node_idx, node_hit_idx, dist=dist)
                 edge = LineString([tuple(node_pos), tuple(nb_pos)])
                 edge_idx = nodeidx_to_edgeidx(node_idx, node_hit_idx, dist)
@@ -402,7 +402,8 @@ def create_node_graph(node_dict, line_map, ball_line_dict):
                             dist = np.array(node_pos) - np.array(nb_data['pos'])
                             mid = np.array(nb_data['pos']) + dist/2.0
                             dist = np.linalg.norm(dist)
-                            ax.text(mid[0],mid[1],"%f"%dist, fontsize=10)
+                            if ax is not None:
+                                ax.text(mid[0],mid[1],"%f"%dist, fontsize=10)
                             G.add_edge(node_idx, nb_idx, dist=dist)
                             edge = LineString([tuple(node_pos), tuple(nb_data['pos'])])
                             edge_idx = nodeidx_to_edgeidx(node_idx, nb_idx, dist)
@@ -410,22 +411,27 @@ def create_node_graph(node_dict, line_map, ball_line_dict):
                             break
     return G, graph_edges
 
-def get_map_graph(map_pts, line_map):
+def get_map_graph(map_pts, line_map, ax=None):
     global lane_width
     radius = (lane_width+0.05)/2.0*np.sqrt(2)
     ball_list = []
     ball_line_dict = {}
     node_dict = {}
+    graph = []
     map_edges = []
     for pt in map_pts:
         ball = Point(pt[0], pt[1]).buffer(radius)
         line_list = get_ball_line(ball, line_map)
         ball_line_dict["%f_%f"%(float(pt[0]), float(pt[1]))] = line_list
         ball_list = check_ball_list(ball, ball_list, ball_line_dict)
-    plot_ball_list(ball_list, radius)
+    if ax is not None:
+        plot_ball_list(ball_list, radius, ax)
     node_list, node_dict = get_node_list(ball_list, node_dict, ball_line_dict)
-    plot_node(node_dict)
-    graph, map_edges = create_node_graph(node_dict, line_map, ball_line_dict)
+    if ax is not None: 
+        plot_node(node_dict, ax)
+        graph, map_edges = create_node_graph(node_dict, line_map, ball_line_dict, ax=ax)
+    else:
+        graph, map_edges = create_node_graph(node_dict, line_map, ball_line_dict)
     return graph, map_edges
 
 def dist_pt_line(pt, line_pt, line_slope):
@@ -440,7 +446,7 @@ def find_nearby_nodes(start, map_graph, map_edges):
     global lane_width
     node_idx_list = []
     ball = Point(start[0], start[1]).buffer(lane_width/2.0)
-    dist_min = lane_width*1000
+    # dist_min = lane_width*1000
     for key,line in map_edges.items():
         if ball.intersects(line):
             x,y = line.xy
@@ -449,16 +455,24 @@ def find_nearby_nodes(start, map_graph, map_edges):
             line_slope = np.array(p1) - np.array(p0)
             line_slope = line_slope/np.linalg.norm(line_slope)
             dist = dist_pt_line(np.array(start), p0, line_slope)
-            if dist < dist_min:
-                dist_min = dist
-                idx0 = str(round(x[0],2))+str(round(y[0],2))
-                idx1 = str(round(x[1],2))+str(round(y[1],2))
-                node_idx_list = [idx0, idx1]
-                if dist < lane_width/2.0:
-                    return node_idx_list
+            print 'line points: ', p0, p1
+            print 'dist: ', dist
+            idx0 = str(round(x[0],2))+str(round(y[0],2))
+            idx1 = str(round(x[1],2))+str(round(y[1],2))
+            node_idx_list.append(idx0)
+            node_idx_list.append(idx1)
+            # if dist < dist_min:
+            #     dist_min = dist
+            #     node_idx_list.append(idx0)
+            #     node_idx_list.append(idx1)
+                # node_idx_list = [idx0, idx1]
+                # if dist < lane_width/2.0:
+                #     print 'return'
+                #     return node_idx_list
     return node_idx_list
 
-def find_path(start, end, orient, map_graph, map_edges):
+def find_path(start, end, orient, map_graph, map_edges, line_map):
+    global lane_width
     path_ret = []
     orient = np.array(orient)
     orient = orient/np.linalg.norm(orient)
@@ -474,14 +488,44 @@ def find_path(start, end, orient, map_graph, map_edges):
         start_node_pos = start_node_tmp['pos']
         start_dist_vec = np.array(start_node_pos) - np.array(start)
         start_dist_tmp = np.linalg.norm(start_dist_vec)
+        # if start_dist_tmp < lane_width/2.0:
+        #     print 'change start node: ', start
+        #     start = start_node_pos
+        #     start_idx = start_idx_tmp
+        #     start_node = start_node_tmp
+        #     start_dist = start_dist_tmp
+        #     break
         start_dist_vec = start_dist_vec/start_dist_tmp
         dot = np.dot(start_dist_vec, orient)
-        if dot > 0 and dot < dot_min:
+        print 'start idx: ', start_idx_tmp, ' dot: ', dot
+        if dot > 0.5 and dot < dot_min:
             dot_min = dot
             start_idx = start_idx_tmp
             start_node = start_node_tmp
             start_dist = start_dist_tmp
+    print 'start idx: ', start_idx
     for end_idx in end_node_idx_list:
+        if end_idx == start_idx:
+            print 'start and end are the same'
+            direct = np.array(end) - np.array(start)
+            direct = direct/np.linalg.norm(direct)
+            dot = np.dot(direct, orient)
+            if dot >= 0.5:
+                print 'dot: ', dot
+                probe = LineString([tuple(start), tuple(end)])
+                check = 1
+                for line in line_map:
+                    if probe.intersects(line):
+                        print 'intersects'
+                        check = 0
+                        break
+                if check == 0:
+                    continue
+                else:
+                    print 'Just go'
+                    break
+            else:
+                continue
         end_node = map_graph.nodes[end_idx]
         end_node_pos = end_node['pos']
         print 'start_dist: ', start_dist
@@ -497,7 +541,9 @@ def find_path(start, end, orient, map_graph, map_edges):
     return path_ret
 
 def my_single_source_dijkstra(G, source, target=None, cutoff=None, weight='weight', orient=None, stop_pt=None):
+    global lane_width, turning_radius
     if source == target:
+        print 'source is the same as the target'
         return ({source: 0}, {source: [source]})
     push = heappush
     pop = heappop
@@ -507,9 +553,13 @@ def my_single_source_dijkstra(G, source, target=None, cutoff=None, weight='weigh
     c = count()
     fringe = []  # use heapq with (distance,label) tuples
     push(fringe, (0, next(c), source, orient))
+    stop_ball = 0
+    if stop_pt is not None:
+        stop_ball = Point(stop_pt[0], stop_pt[1]).buffer(lane_width/2.0)
     while fringe:
         (d, _, v, orient_tmp) = pop(fringe)
         print 'vertex? ', v
+        print 'orientation: ', orient_tmp
         if v in dist:
             continue  # already searched this node.
         dist[v] = d
@@ -535,11 +585,20 @@ def my_single_source_dijkstra(G, source, target=None, cutoff=None, weight='weigh
                 w_pos = G.nodes[w]['pos']
                 w_orient = np.array(w_pos) - np.array(v_pos)
                 w_orient = w_orient/np.linalg.norm(w_orient)
+                print 'w_orient: ', w_orient
+                probe_end_pt = (np.array(v_pos) + vw_dist*w_orient).tolist()
+                probe = LineString([tuple(v_pos), tuple(probe_end_pt)])
                 dot = np.dot(orient_tmp, w_orient)
                 print 'dot wv: ', dot
-                if dot <= -0.5:
-                    print 'not right'
+                if dot <= -0.2:
+                    print 'orientation not right'
                     continue
+
+                if probe.intersects(stop_ball):
+                    print 'Stop because probe reaches the stop point'
+                    paths[target] = paths[v]
+                    return (dist, paths)
+
             if cutoff is not None:
                 if vw_dist > cutoff:
                     continue
@@ -551,6 +610,7 @@ def my_single_source_dijkstra(G, source, target=None, cutoff=None, weight='weigh
                 seen[w] = vw_dist
                 push(fringe, (vw_dist, next(c), w, w_orient))
                 paths[w] = paths[v] + [w]
+            
     return (dist, paths)
 
 def my_dijkstra_path(G, source, target, weight='weight', orient=None, stop_pt=None):
@@ -612,6 +672,28 @@ def plot_path(source, target, path, map_graph):
     lineCol = mc.LineCollection(line_pts, color="r", linewidths=2)
     ax.add_collection(lineCol)
 
+def onclick(event):
+    global ix, iy
+    global ax
+    global map_graph, map_edges, line_map
+    ix, iy = event.xdata, event.ydata
+    print 'x = %f, y = %f'%(ix, iy)
+    global coords
+    coords.append((ix, iy))
+    if len(coords) == 2:
+        fig.canvas.mpl_disconnect(cid)
+        source = coords[0]
+        target = coords[1]
+        orient = [1,0.5]
+        arrow = patches.Arrow(source[0],source[1],orient[0],orient[1],width=0.5)
+        ax.add_artist(arrow)
+        path = find_path(source, target, orient, map_graph, map_edges, line_map)
+        print path
+        plot_path(source, target, path, map_graph)
+        plt.show()
+
+    return coords
+
 if __name__ == '__main__':
     fig = plt.figure()
     ax = plt.axes(xlim=(-3,5), ylim=(-1,8))
@@ -622,11 +704,22 @@ if __name__ == '__main__':
     line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1))
     map_pts = get_map_pts(map_poly)
     visual_thread = Visualize()
-    map_graph, map_edges = get_map_graph(map_pts, line_map)
-    source = [0.79,4.03]
-    target = [2.05, 3.8]
-    orient = [-0.5, 1]
-    path = find_path(source, target, orient, map_graph, map_edges)
-    print path
-    plot_path(source, target, path, map_graph)
+    map_graph, map_edges = get_map_graph(map_pts, line_map, ax=ax)
+    print map_edges.items()
+    coords = []
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    # source = [0.79,4.03]
+    # target = [2.05, 3.8]
+    # target = [1.07, 3.68]
+    # target = [-2.31, 5.0]
+    # orient = [-0.5, 1]
+    # source = [2.56,3.44]
+    # target = [2.17, 2.31]
+    # orient = [1,0.5]
+    # source = coords[0]
+    # target = coords[1]
+    # orient = [1,0.5]
+    # path = find_path(source, target, orient, map_graph, map_edges, line_map)
+    # print path
+    # plot_path(source, target, path, map_graph)
     plt.show()
