@@ -21,10 +21,12 @@ from collections import deque
 from heapq import heappush, heappop
 from itertools import count
 from networkx.utils import generate_unique_node
+import scipy as sp
+import scipy.interpolate
 
 map_path = '/home/antonio/catkin_ws/src/race/src/map/map_2.txt'
 lane_width = 0.6
-turning_radius = 0.6
+turning_radius = 0.45
 lane_probe = 0
 # Map parameters that determine the size and orientation of the map
 p0 = [3.75, 4.66]
@@ -40,6 +42,26 @@ class Visualize (threading.Thread):
         global lane_probe, probe_plot
         print 'Start visualize'
         plot_line(line_map)
+
+
+def check_cross(vec1, vec2):
+    cross = np.cross(np.array(vec1), np.array(vec2))
+    return np.asscalar(cross)
+
+def find_ang(vec1, vec2):
+    ang_ret = 0
+    if (np.array(vec1).tolist() != 0) and (np.array(vec2).tolist() != 0):
+        vec1 = np.array(vec1)/float(np.linalg.norm(vec1))
+        vec2 = np.array(vec2)/float(np.linalg.norm(vec2)) 
+        dot = np.dot(vec1, vec2)
+
+        cross = check_cross(vec1, vec2)
+        if cross >= 0:
+            ang_ret = np.arccos(np.clip(dot, -1.0, 1.0))
+        else:
+            ang_ret = -1*np.arccos(np.clip(dot, -1.0, 1.0))
+
+    return ang_ret
 
 def get_lim(line_map_plot):
     x_min = 1000
@@ -455,8 +477,6 @@ def find_nearby_nodes(start, map_graph, map_edges):
             line_slope = np.array(p1) - np.array(p0)
             line_slope = line_slope/np.linalg.norm(line_slope)
             dist = dist_pt_line(np.array(start), p0, line_slope)
-            print 'line points: ', p0, p1
-            print 'dist: ', dist
             idx0 = str(round(x[0],2))+str(round(y[0],2))
             idx1 = str(round(x[1],2))+str(round(y[1],2))
             node_idx_list.append(idx0)
@@ -523,7 +543,7 @@ def find_path(start, end, orient, map_graph, map_edges, line_map):
                     continue
                 else:
                     print 'Just go'
-                    break
+                    return []
             else:
                 continue
         end_node = map_graph.nodes[end_idx]
@@ -663,12 +683,15 @@ def my_shortest_path(G, source=None, target=None, weight=None, orient=None, stop
 def plot_path(source, target, path, map_graph):
     global ax
     line_pts = []
-    p_prev = tuple(source)
-    for p in path:
-        node_pos_tmp = tuple(map_graph.nodes[p]['pos'])
-        line_pts.append([p_prev, node_pos_tmp])
-        p_prev = node_pos_tmp
-    line_pts.append([p_prev, tuple(target)])
+    if len(path) > 0:
+        p_prev = tuple(source)
+        for p in path:
+            node_pos_tmp = tuple(map_graph.nodes[p]['pos'])
+            line_pts.append([p_prev, node_pos_tmp])
+            p_prev = node_pos_tmp
+        line_pts.append([p_prev, tuple(target)])
+    else:
+        line_pts = [[source, target]]
     lineCol = mc.LineCollection(line_pts, color="r", linewidths=2)
     ax.add_collection(lineCol)
 
@@ -690,9 +713,72 @@ def onclick(event):
         path = find_path(source, target, orient, map_graph, map_edges, line_map)
         print path
         plot_path(source, target, path, map_graph)
+        num_pt = len(path)
+        if num_pt > 0:
+            pt_list = [list(source)]
+            for i in range(num_pt):
+                pt = map_graph.nodes[path[i]]['pos']
+                pt_list.append(pt)
+            pt_list.append(list(target))
+            pt_list = parse_spline(pt_list)
+            spline_pts = draw_spline(pt_list)
+            x_list = [pt[0] for pt in pt_list]
+            y_list = [pt[1] for pt in pt_list]
+            ax.scatter(x_list,y_list)
+            ax.plot(spline_pts[0], spline_pts[1], color='g', linewidth=3)
+            # spline = mc.LineCollection(spline_pts, color="g", linewidths=2)
+            # ax.add_collection(spline)
         plt.show()
 
     return coords
+
+def parse_spline(pts):
+    global turning_radius
+    pts_list = []
+    pts_list.append(pts[0])
+    num_pts = len(pts)
+    for i in range(1,num_pts-1):
+        p0 = pts[i-1]
+        p1 = pts[i]
+        p2 = pts[i+1]
+        orient_0 = np.array(p0) - np.array(p1)
+        orient_0 = orient_0/np.linalg.norm(orient_0)
+        orient_1 = np.array(p2) - np.array(p1)
+        orient_1 = orient_1/np.linalg.norm(orient_1)
+        ang = find_ang(orient_0, orient_1)
+        new0 = []
+        new1 = []
+        if ang >= np.radians(90.0):
+            new0 = np.array(p1) + turning_radius*orient_0
+            new1 = np.array(p1) + turning_radius*orient_1
+        else:
+            dist = turning_radius/abs(np.tan(ang/2.0))
+            new0 = np.array(p1) + dist*orient_0
+            new1 = np.array(p1) + dist*orient_1
+        pts_list.append(new0.tolist())
+        pts_list.append(new1.tolist())
+    pts_list.append(pts[-1])
+    return pts_list
+
+def draw_spline(pts):
+    ctr = np.array(pts)
+    x = ctr[:, 0]
+    y = ctr[:, 1]
+    l = len(x)
+    t = np.linspace(0, 1, l-2, endpoint=True)
+    t = np.append([0,0,0],t)
+    t = np.append(t,[1,1,1])
+    # print x
+    # print y
+    # print t
+    tck = [t,[x,y],3]
+    u3 = np.linspace(0,1,(max(l*2, 100)), endpoint=True)
+    out = scipy.interpolate.splev(u3,tck)
+    # tck, u = scipy.interpolate.splprep([x,y],k=3,s=0)
+    # print 'tck: ', tck
+    # u = np.linspace(0,1,num=100,endpoint=True)
+    # out = scipy.interpolate.splev(u,tck)
+    return out
 
 if __name__ == '__main__':
     fig = plt.figure()
