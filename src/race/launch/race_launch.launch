@@ -1,8 +1,6 @@
 <?xml version="1.0"?>
 <launch>
-		
-        
-        <node name="joy_node" pkg="joy" type="joy_node" output="screen">
+		<node name="joy_node" pkg="joy" type="joy_node" output="screen">
 			<param name="dev" type="str" value="/dev/input/js0"  />
 		</node>
 		<node pkg="race" type="xbox_control.py" name="xbox_control" output="screen">
@@ -25,6 +23,7 @@
 		<!-- see this https://unix.stackexchange.com/questions/66901/how-to-bind-usb-device-under-a-static-name -->
         </node>
         <!-- Launch the IMU -->
-        <!-- <include file="$(find race)/launch/IMU/razor-pub.launch"/>
-        <node pkg="race" type="imu_tf.py" name="imu_tf" output="screen"/> -->
+        <!-- <include file="$(find race)/launch/IMU/razor-pub.launch"/> -->
+        <!-- <node pkg="race" type="imu_tf.py" name="imu_tf" output="screen"/> -->
+        <!-- <include file="$(find rosbridge_server)/launch/rosbridge_websocket.launch"/> -->
 </launch>

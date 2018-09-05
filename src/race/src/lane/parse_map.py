@@ -26,6 +26,7 @@ import scipy.interpolate
 
 map_path = '/home/antonio/catkin_ws/src/race/src/map/map_2.txt'
 lane_width = 0.6
+car_length = 0.34
 turning_radius = 0.45
 lane_probe = 0
 # Map parameters that determine the size and orientation of the map
@@ -610,7 +611,7 @@ def my_single_source_dijkstra(G, source, target=None, cutoff=None, weight='weigh
                 probe = LineString([tuple(v_pos), tuple(probe_end_pt)])
                 dot = np.dot(orient_tmp, w_orient)
                 print 'dot wv: ', dot
-                if dot <= -0.2:
+                if dot <= -0.3:
                     print 'orientation not right'
                     continue
 
@@ -720,28 +721,33 @@ def onclick(event):
                 pt = map_graph.nodes[path[i]]['pos']
                 pt_list.append(pt)
             pt_list.append(list(target))
-            pt_list = parse_spline(pt_list)
+            pt_list = parse_spline(pt_list, orient)
             spline_pts = draw_spline(pt_list)
             x_list = [pt[0] for pt in pt_list]
             y_list = [pt[1] for pt in pt_list]
-            ax.scatter(x_list,y_list)
             ax.plot(spline_pts[0], spline_pts[1], color='g', linewidth=3)
+            ax.scatter(x_list,y_list, c='r')
             # spline = mc.LineCollection(spline_pts, color="g", linewidths=2)
             # ax.add_collection(spline)
         plt.show()
 
     return coords
 
-def parse_spline(pts):
-    global turning_radius
+def parse_spline(pts, orient):
+    global turning_radius, car_length
     pts_list = []
     pts_list.append(pts[0])
     num_pts = len(pts)
+    dist_0 = -1
+    new_pt = np.array(pts[0]) + car_length*np.array(orient)
+    pts_list.append(new_pt.tolist())
     for i in range(1,num_pts-1):
         p0 = pts[i-1]
         p1 = pts[i]
         p2 = pts[i+1]
         orient_0 = np.array(p0) - np.array(p1)
+        if i == 1:
+            dist_0 = np.linalg.norm(orient_0)
         orient_0 = orient_0/np.linalg.norm(orient_0)
         orient_1 = np.array(p2) - np.array(p1)
         orient_1 = orient_1/np.linalg.norm(orient_1)
@@ -751,10 +757,34 @@ def parse_spline(pts):
         if ang >= np.radians(90.0):
             new0 = np.array(p1) + turning_radius*orient_0
             new1 = np.array(p1) + turning_radius*orient_1
+            if i == 1 and dist_0 > 0:
+                if dist_0 < turning_radius:
+                    print 'tooooo short'
+                    #new0 = np.array(p0) + car_length*np.array(orient)
+                    new1 = np.array(p0) + car_length*np.array(orient) - turning_radius*orient_0 + turning_radius*orient_1
+                    #pts_list.append(new0.tolist())
+                    pts_list.append(new1.tolist())
+                    continue
+                elif dist_0 < turning_radius + car_length:
+                    print 'tooo short'
+                    pts_list.append(new1.tolist())
+                    continue
         else:
             dist = turning_radius/abs(np.tan(ang/2.0))
             new0 = np.array(p1) + dist*orient_0
             new1 = np.array(p1) + dist*orient_1
+            if i == 1 and dist_0 > 0:
+                if dist_0 < dist:
+                    print 'toooo short'
+                    #new0 = np.array(p0) + car_length*np.array(orient)
+                    new1 = np.array(p0) + car_length*np.array(orient) - dist*orient_0 + dist*orient_1
+                    #pts_list.append(new0.tolist())
+                    pts_list.append(new1.tolist())
+                    continue
+                elif dist_0 < dist + car_length:
+                    print 'too short'
+                    pts_list.append(new1.tolist())
+                    continue
         pts_list.append(new0.tolist())
         pts_list.append(new1.tolist())
     pts_list.append(pts[-1])

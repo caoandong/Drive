@@ -41,9 +41,11 @@ import parse_map
 
 drive_pub = rospy.Publisher('lane_driver', drive_param, queue_size=1)
 visual_pub_car = rospy.Publisher('lane_driver/car', String, queue_size=1)
+
+path_pub = rospy.Publisher('lane_driver/path', String, queue_size=1)
 update_debug = rospy.Publisher('lane_driver/update_debug', String, queue_size=1)
 localize_debug = rospy.Publisher('lane_driver/localize_debug', String, queue_size=1)
-orient_debug = rospy.Publisher('lane_driver/localize_debug', String, queue_size=1)
+orient_debug = rospy.Publisher('lane_driver/orient_debug', String, queue_size=1)
 pid_debug = rospy.Publisher('lane_driver/pid_debug', String, queue_size=1)
 off_lane_debug = rospy.Publisher('lane_driver/offlane_debug', String, queue_size=1)
 # visual_pub_FOV = rospy.Publisher('lane_driver/FOV', String, queue_size=1)
@@ -99,9 +101,11 @@ turn_right_probe = LineString([(0.0, 0.0), (0.1+shift, -0.0101), (0.2+shift, -0.
 driver = drive_param()
 driver.velocity = 0
 driver.angle = 0
-P = 100
-I = -0.15
-D = -75
+P = 300
+I = 0
+D = 150
+#I = -0.15
+#D = -100
 
 # Map parameters that determine the size and orientation of the map
 p0 = [3.75, 4.66]
@@ -155,17 +159,24 @@ class Localize (threading.Thread):
 
     def run(self):
         global START, init
-        global lane_width
+        global lane_width, car_pos, car_orient
         update_debug.publish('Start localize')
 
         while True:
-            if START == 1 and init > 3:
+            if START == 1:
                 global imu_lin_accel, odom_pos, odom_pos_prev, odom_pos_tmp, odom_orient_tmp, odom_orient_prev, imu_ang_vel, dt_pred, car_pos_pred, turning
                 global odom_pos_1, odom_pos_prev_1, odom_pos_tmp_1, odom_orient_tmp_1, odom_pos_2, odom_pos_prev_2, odom_pos_tmp_2, odom_orient_tmp_2, imu_orient
-                odom_pos = (np.array(odom_pos_1) + np.array(odom_pos_2))/2.0
-                odom_pos = odom_pos.tolist()
+                #odom_pos = (np.array(odom_pos_1) + np.array(odom_pos_2))/2.0
+                odom_pos = 0.8*np.array(odom_pos_1) + 0.2*np.array(odom_pos_2)
+                try:
+                    if type(odom_pos) == np.ndarray:
+                        odom_pos = odom_pos.tolist()
+                except:
+                    pass
                 odom_orient_tmp = np.array(odom_pos_1) - np.array(odom_pos_2)
-                odom_orient_tmp = odom_orient_tmp/np.linalg.norm(odom_orient_tmp)
+                odom_orient_tmp_norm = np.linalg.norm(odom_orient_tmp)
+                if odom_orient_tmp_norm != 0:
+                    odom_orient_tmp = odom_orient_tmp/odom_orient_tmp_norm
                 odom_orient_tmp = odom_orient_tmp.tolist()
                 localize_debug.publish("odom_orient_tmp: %s" % str(odom_orient_tmp))
                 if init < 2:
@@ -178,8 +189,10 @@ class Localize (threading.Thread):
                     if dist <= lane_width:
                         car_pos = odom_pos
                 elif init > 3:
+                    
                     localize_debug.publish('start localizing ? odom_pos: %s | odom_pos_prev: %s' % (str(odom_pos), str(odom_pos_prev)))
                     if odom_pos != odom_pos_prev:
+                        odom_pos_prev = odom_pos
                         orient = np.array(car_orient)/np.linalg.norm(car_orient)
                         w0 = 1 # weight of center offset
                         car_pos_pred = predict_pos(car_pos, car_orient)
@@ -189,12 +202,14 @@ class Localize (threading.Thread):
                         pos_weight = gauss_distrib(pos_diff_norm, 0, 1/(2*np.pi), 3)
                         localize_debug.publish('pos_diff_norm: %f | pos_weight: %f' % (pos_diff_norm, pos_weight))
                         car_pos = np.array(odom_pos) + pos_weight*np.array(pos_diff)
-                        
-                        car_orient_pred = predict_orient(car_orient)
-                        car_orient_pred = check_orient_pred(car_orient_pred)
-                        car_orient = 0.8*np.array(odom_orient_tmp) + 0.2*np.array(car_orient_pred)
-                        car_orient = car_orient.tolist()
-                        odom_pos_prev = odom_pos
+                        print 'imu_ang_vel: ', imu_ang_vel
+                        car_orient_pred = []
+                        if abs(imu_ang_vel) > 0.02:
+                            car_orient_pred = predict_orient(car_orient)
+                            car_orient_pred = check_orient_pred(car_orient_pred)
+                            car_orient = 0.8*np.array(odom_orient_tmp) + 0.2*np.array(car_orient_pred)
+                            car_orient = car_orient.tolist()
+                            print 'car_orient: ', car_orient, ' car_orient_pred: ', car_orient_pred, ' odom_orient_tmp: ', odom_orient_tmp
 
                         if type(odom_orient_tmp) == np.ndarray:
                             odom_orient_tmp = odom_orient_tmp.tolist()
@@ -219,6 +234,7 @@ class Update (threading.Thread):
         while True:
             if START == 1:
                 update_drive_error()
+                check_destination()
 
 # Basic helper functions:
 def quat_to_ang(quat):
@@ -1160,13 +1176,16 @@ def update_left_right(turn):
 
 # Update functions
 def update_drive_error():
-    global car_pos, car_orient, car_path, dist_error, dist_error_prev, ang_error
+    global car_pos, car_orient, car_path, car_path_string, dist_error, dist_error_prev, ang_error, drive_pub
+    if type(car_path_string) == list:
+        return
+    car_radius = 0.1
     car_ball = Point(car_pos[0], car_pos[1]).buffer(car_radius)
-    while not car_ball.intersects(car_path):
+    while not car_ball.intersects(car_path_string):
         car_radius = 1.1*car_radius
         update_debug.publish("Keep growing the ball radius: %f" % car_radius)
         car_ball = affinity.scale(car_ball, 1.1, 1.1)
-    intersection = car_ball.intersection(car_path)
+    intersection = car_ball.intersection(car_path_string)
     x_list, y_list = intersection.coords.xy
     inter_list = [[x_list[i], y_list[i]] for i in range(len(x_list))]
     lane_orient = []
@@ -1190,16 +1209,43 @@ def update_drive_error():
         dist_error_prev = dist_error
         dist_error = np.linalg.norm(np.array(pt_next) - np.array(car_pos))
     update_debug.publish("ang_error: %f | dist_error: %f" % (ang_error, dist_error))
+    print "ang_error: ", ang_error, " dist_error: ", dist_error
+    if driver.velocity > 17:
+        dist_weight = (-1.0/(10*abs(dist_error)+1.0)+1.0)*0.5
+        ang_weight = (abs(ang_error)/(np.pi))*0.5
+        weight = dist_weight + ang_weight
+        driver.velocity -= (driver.velocity - 17)*weight
+        pid_debug.publish('PID velocity: %f | ang_weight: %f | dist_weight: %f' % (driver.velocity, ang_weight, dist_weight))
+        drive_pub.publish(driver)
+        print 'PID velocity: ', driver.velocity,' ang_weight: ', ang_weight,' dist_weight: ', dist_weight
+
+def check_destination():
+    global car_pos, car_orient, car_path, car_path_string, lane_width, destination, destination_reached, update_debug, driver, drive_pub
+    if len(destination) == 2 and len(car_path) >= 2:
+        dist = np.array(destination) - np.array(car_pos)
+        dist = np.linalg.norm(dist)
+        if dist <= lane_width/2.0:
+            update_debug.publish('Stop, destination reached.')
+            print 'Stop, destination reached.'
+            driver.velocity = 0
+            driver.angle = 0
+            drive_pub.publish(driver)
+            destination_reached = 1
+            destination = []
+            car_path = []
+            car_path_string = []
+        else:
+            destination_reached = 0
 
 def update_pid_error():
-    global car_pos, car_orient, e_p, e_p_prev, e_i, e_d, left_lane, right_lane, left_lane_pts, right_lane_pts, driver_pub, imu_ang_vel, driver_vel
+    global car_pos, car_orient, e_p, e_p_prev, e_i, e_d, left_lane, right_lane, left_lane_pts, right_lane_pts, drive_pub, imu_ang_vel, driver_vel
     global ang_error, dist_error, dist_error_prev
     pid_debug.publish('updated pid error:')
     if ang_error != 0 or dist_error != 0:
         error = abs(dist_error)
         if ang_error > 0:
             # turn left
-            erorr = -1*abs(dist_error)
+            error = -1*abs(dist_error)
 
         e_p = error
 
@@ -1214,20 +1260,23 @@ def update_pid_error():
     pid_debug.publish('PID errors e_p: %f | e_d: %f | e_i: %f' % (e_p, e_d, e_i))
 
 def PID():
-    global car_pos, car_orient, e_p, e_i, e_d, P, I, D, turning
+    global car_pos, car_orient, e_p, e_i, e_d, P, I, D, turning, drive_pub
     if turning == 0:
-        driver.velocity = 18
+        #driver.velocity = 19.5
         driver.angle = P*e_p + D*e_d + I*e_i
         pid_debug.publish('current position: %s' % str(car_pos))
         pid_debug.publish('update drive param:')
         pid_debug.publish('Contribution of P*e_p: %f | D*e_d: %f | I*e_i: %f' % (P*e_p, D*e_d, I*e_i))
+        print 'Current postion: ', car_pos, ' current orientation: ', car_orient
+        print 'Contribution of P*e_p: ', P*e_p, ' D*e_d: ', D*e_d, ' I*e_i: ', I*e_i
         if driver.angle > 100:
             driver.angle = 100
         elif driver.angle < -100:
-            driver.velocity = 18
             driver.angle = -100
-        pid_debug.publish('PID output angle: %f' % driver.angle)
+        driver.velocity = 0.02*abs(driver.angle)+18
+        pid_debug.publish('PID output angle: %f | verlocity: %f' % (driver.angle, driver.velocity))
         drive_pub.publish(driver)
+        print 'PID output angle: ', driver.angle, ' velocity: ', driver.velocity
 
 def turning_complete_update():
     global turning, turning_complete, print_update
@@ -2037,63 +2086,65 @@ def navigate():
     global left_probe, right_probe, front_probe, turn_left_probe, turn_right_probe
     global cam_left_line, cam_right_line, cam_mid_line, cam_mid_left_line, cam_mid_right_line
     global env_lines
-    global driver, driver_pub
+    global driver, drive_pub
     global turning, turning_complete, left_lane_turn, right_lane_turn
     global imu_ang, odom_orient_prev
     global lane_predict, off_lane, off_lane_toggle
     global odom_pos, odom_pos_prev, odom_pos_tmp, odom_orient_tmp
     global odom_pos_1, odom_pos_prev_1, odom_pos_tmp_1, odom_orient_tmp_1, odom_pos_2, odom_pos_prev_2, odom_pos_tmp_2, odom_orient_tmp_2
+    global destination, destination_reached, reset_dest
+    global car_pos, car_orient, prev_pos
+    global map_graph, map_edges, line_map, car_path, car_path_string
 
     if print_main == 1:
         print '------------------------- START NAVIGATE --------------------------'
         print 'car_pos: ', car_pos
         print 'car_orient: ', car_orient
     
-    global destination, reset_dest
-    global car_pos, car_orient, prev_pos
-    global map_graph, map_edges, line_map, car_path, car_path_string
-
-    if reset_dest == 1:
+    print 'reset_dest: ', reset_dest
+    if reset_dest == 1 and len(destination) == 2:
+        print 'destination changed'
         reset_dest = 0
-        if len(destination) == 2:
-            update_debug.publish('Stop, recalculate the path')
-            print 'Stop, recalculate the path'
-            driver.velocity = 0
-            driver.angle = 0
-            drive_pub.publish(driver)
-            if type(car_orient) == np.ndarray:
-                car_orient = car_orient.tolist()
-            path = parse_map.find_path(car_pos, destination, car_orient, map_graph, map_edges, line_map)
-            num_pt = len(path)
-            if num_pt > 0:
-                pt_list = [car_pos]
-                for i in range(num_pt):
-                    pt = map_graph.nodes[path[i]]['pos']
-                    pt_list.append(pt)
-                pt_list.append(destination)
-                pt_list = parse_map.parse_spline(pt_list)
-                spline_pts = parse_map.draw_spline(pt_list)
-                car_path = spline_pts[:]
-            else:
-                car_path = [car_pos, destination]
-            car_path_string = LineString([tuple(pt) for pt in car_path])
-            update_debug.publish("car_path updated: %s" % str(car_path))
+        update_debug.publish('Stop, recalculate the path')
+        print 'Stop, recalculate the path'
+        driver.velocity = 0
+        driver.angle = 0
+        drive_pub.publish(driver)
+        if type(car_orient) == np.ndarray:
+            car_orient = car_orient.tolist()
+        path = parse_map.find_path(car_pos, destination, car_orient, map_graph, map_edges, line_map)
+        num_pt = len(path)
+        print 'num_pt: ', num_pt
+        if num_pt > 0:
+            pt_list = [car_pos]
+            for i in range(num_pt):
+                pt = map_graph.nodes[path[i]]['pos']
+                pt_list.append(pt)
+            pt_list.append(destination)
+            #print 'pt_list before: ', pt_list
+            pt_list = parse_map.parse_spline(pt_list, car_orient)
+            #print 'pt_list after: ', pt_list
+            spline_pts = parse_map.draw_spline(pt_list)
+            #print 'spline_pts: ', spline_pts
+            car_path = [[spline_pts[0][i], spline_pts[1][i]] for i in range(len(spline_pts[0]))]
+        else:
+            car_path = [car_pos, destination]
+        path_x_list = [car_path[i][0] for i in range(len(car_path))]
+        path_y_list = [car_path[i][1] for i in range(len(car_path))]
+        #print 'path_x_list: ', path_x_list, ' path_y_list: ', path_y_list
+        car_path = [tuple(pt) for pt in car_path]
+        #print car_path
+        update_debug.publish("car_path updated: %s" % str(car_path))
+        car_path_string = LineString(car_path)
+        path_list = [[path_x_list[i], path_y_list[i]] for i in range(len(path_x_list))]
+        path_pub.publish('%s' % str(path_list))
     global lane_width, car_width, path_orient
     if len(destination) == 2 and len(car_path) >= 2:
-        dist = np.array(destination) - np.array(car_pos)
-        dist = np.linalg.norm(dist)
-        if dist <= lane_width/2.0:
-            update_debug.publish('Stop, destination reached.')
-            print 'Stop, destination reached.'
-            driver.velocity = 0
-            driver.angle = 0
-            drive_pub.publish(driver)
-            destination = []
-            car_path = []
-        else:
+        if destination_reached == 0:
             print 'Following lane'
-            driver.velocity = 18
-        PID()
+            driver.velocity = 19.5
+            update_pid_error()
+            PID()
 
 # Callback functions
 
@@ -2101,7 +2152,7 @@ def navigate():
 def joy_callback(joy_data):
     global START
     global toggle
-    global init, turning, turning_complete, left_lane_turn, right_lane_turn, turning_start, destination, reset_dest
+    global init, turning, turning_complete, left_lane_turn, right_lane_turn, turning_start, destination, destination_reached, reset_dest
     global car, car_pos, car_orient, car_orient_prev, imu_orient, ell_list, car_pos_pred, path_orient, car_path_string
     global prev_time, now_time, update_pose_prev_time, update_pose_now_time
     global prev_pos, now_pos
@@ -2129,9 +2180,10 @@ def joy_callback(joy_data):
             turning_complete = 0
             turning_start = 0
             destination = []
+            destination_reached = 0
             car_path = []
             car_path_string = []
-            reset_dest = 0
+            reset_dest = 1
             path_orient = []
 
             # Reset the car back to initial position
@@ -2156,9 +2208,7 @@ def joy_callback(joy_data):
             odom_orient_tmp_2 = [1,0]
             odom_orient_prev = 1j
             ell_list = []
-            if type(car_orient) == np.ndarray:
-                car_orient = car_orient.tolist()
-            visual_pub_car.publish("[%s, %s]" % (str(car_pos), str(car_orient)))
+            
             car_x_off = car_y_off = car_ang_off = 0
             pred_distrib = [[0,0],0,0,0]
 
@@ -2276,33 +2326,6 @@ def callback_camera(string):
         cam_mid_right_line = data[3]
         cam_right_line = data[4]
 
-        if print_main == 1:
-            print 'left line: ', cam_left_line
-            print 'right line: ', cam_right_line
-            print 'mid left line: ', cam_mid_left_line
-            print 'mid right line: ', cam_mid_right_line
-            print 'mid line: ', cam_mid_line
-
-
-# Obtaining the car's pose
-def callback(odom):
-    global START, odom_pos, odom_pos_tmp, odom_pos_prev
-    global car_pos, prev_pos
-
-    if START == 1:
-        odom_pos = [odom.pose.pose.position.x,odom.pose.pose.position.y]
-        # Initializing stage:
-        if init < 2:
-            car_pos = odom_pos
-        elif init <= 3:
-            global prev_pos
-            # Initializing orientation stage
-            vec = np.array(odom_pos) - np.array(prev_pos)
-            dist = np.linalg.norm(vec)
-            if dist <= 0.75:
-                car_pos = odom_pos
-            odom_pos_prev = odom_pos
-
 # Obtaining the car's location
 def callback_tag_1(data):
     global START, odom_pos_1
@@ -2324,6 +2347,17 @@ def callback_map(data):
     if len(destination) > 0:
         reset_dest = 1
     destination = eval(data.data)
+    print 'reset destination: ', destination
+
+def callback_web(data):
+    global destination, reset_dest
+    dest = eval(data.data)
+    print 'received web data: ', dest;
+    # if type(dest) == list:
+    #     if len(destination) > 0:
+    #         reset_dest = 1
+    #     destination = dest
+    #     print 'reset destination: ', destination
 
 rospy.init_node('lane_driver', anonymous=True)
 
@@ -2336,9 +2370,10 @@ turning_start = 0
 
 # Navigation parameters
 destination = []
+destination_reached = 0
 car_path = []
 car_path_string = []
-reset_dest = 0
+reset_dest = 1
 path_orient = []
 
 # Initialize environment variables
@@ -2382,6 +2417,7 @@ if __name__ == '__main__':
     rospy.Subscriber("DecaWave_tag_1", String, callback_tag_1)
     rospy.Subscriber("DecaWave_tag_2", String, callback_tag_2)
     rospy.Subscriber("map_interface", String, callback_map)
+    rospy.Subscriber('web_socket/path', String, callback_web)    
 
     # Initialize the map
     map_path = '/home/antonio/catkin_ws/src/race/src/map/map.txt'
@@ -2396,9 +2432,13 @@ if __name__ == '__main__':
     update_pose_prev_time = update_pose_now_time = 0
 
     while not rospy.is_shutdown():
-        left_lane_pts, right_lane_pts, car_pos_pred, odom_pos = check_type([left_lane_pts, right_lane_pts, car_pos_pred, odom_pos])
-        visual_pub_car.publish("[%s, %s, %s, %s, %s, %s, %s]" 
-        % (str(car_pos), str(car_orient), str(pred_distrib), str([left_lane_pts, right_lane_pts]), str(lane_predict), str(car_pos_pred), str(odom_pos)))
+        car_pos, car_orient, left_lane_pts, right_lane_pts, car_pos_pred, odom_pos = check_type([car_pos, car_orient, left_lane_pts, right_lane_pts, car_pos_pred, odom_pos])
+        # if type(car_orient) == np.ndarray:
+        #     car_orient = car_orient.tolist()
+        visual_pub_car.publish("car_pos: %s; car_orient: %s; left_right: %s; lane_predict: %s; car_pos_pred: %s; odom_pos: %s"
+            % (str(car_pos), str(car_orient), str([left_lane_pts, right_lane_pts]), str(lane_predict), str(car_pos_pred), str(odom_pos)))
+        # visual_pub_car.publish("[%s, %s, %s, %s, %s, %s, %s]" 
+        # % (str(car_pos), str(car_orient), str(pred_distrib), str([left_lane_pts, right_lane_pts]), str(lane_predict), str(car_pos_pred), str(odom_pos)))
         localize_debug.publish('car_pos: %s | car_orient: %s' % (str(car_pos), str(car_orient)))
         if START == 1:
             if init <= 3:
