@@ -48,6 +48,7 @@ class Update (threading.Thread):
                 # counter_test = 1
                 
                 server.send_message_to_all(new_path_test+str(path_list))
+                print 'published path: ', path_list[0:5]
                 new_path = 0
             if type(car_pos) == list and type(car_orient) == list:
                 if car_pos == [0,0] and car_orient == [1,0]:
@@ -100,21 +101,22 @@ def new_message(client, server, message):
     print 'Received message: ', repr(m), ' from ', client['address']
     if type(m) == str:
         print 'first byte: ', m[0]
-        try:
-            if m[0] == dest_test:
-                data = m[1:].split(',')
-                dest = [eval(data[0]),eval(data[1])]
-                print 'dest: ', dest
-                if dest == destination:
+        # try:
+        if m[0] == dest_test:
+            data = m[1:].split(',')
+            dest = [eval(data[0]),eval(data[1])]
+            print 'dest: ', dest
+            if len(destination) > 0:
+                if np.linalg.norm(np.array(dest) - np.array(destination)) < 0.5:
                     print 'destination not changed.'
                     return
-                destination = dest
-                received_destination = 1
-                # path_pub.publish(str(destination))
-                received_destination = 0
-                print 'Received destination: ', destination
-        except:
-            return
+            destination = dest
+            received_destination = 1
+            path_pub.publish(str(destination))
+            received_destination = 0
+            print 'Received destination: ', destination
+        # except:
+        #     return
 
 def client_left(client, server):
     server.send_message_to_all("Bye bye mother-fucker")
@@ -164,7 +166,7 @@ def callback_car(data):
     else:
         new_car_param = 1
 
-server = WebsocketServer(9090, host='172.27.165.101')
+server = WebsocketServer(9090, host='172.27.173.183')
 server.set_fn_new_client(new_client)
 server.set_fn_message_received(new_message)
 server.set_fn_client_left(client_left)

@@ -2112,7 +2112,12 @@ def navigate():
         drive_pub.publish(driver)
         if type(car_orient) == np.ndarray:
             car_orient = car_orient.tolist()
-        path = parse_map.find_path(car_pos, destination, car_orient, map_graph, map_edges, line_map)
+        try:
+            path = parse_map.find_path(car_pos, destination, car_orient, map_graph, map_edges, line_map)
+        except:
+            print 'Cannot find path.'
+            destination = []
+            return
         num_pt = len(path)
         print 'num_pt: ', num_pt
         if num_pt > 0:
@@ -2353,11 +2358,11 @@ def callback_web(data):
     global destination, reset_dest
     dest = eval(data.data)
     print 'received web data: ', dest;
-    # if type(dest) == list:
-    #     if len(destination) > 0:
-    #         reset_dest = 1
-    #     destination = dest
-    #     print 'reset destination: ', destination
+    if type(dest) == list:
+        if len(destination) > 0:
+            reset_dest = 1
+        destination = dest
+        print 'reset destination: ', destination
 
 rospy.init_node('lane_driver', anonymous=True)
 

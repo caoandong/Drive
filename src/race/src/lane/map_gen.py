@@ -11,7 +11,7 @@ from matplotlib import collections as mc
 # interior outlines: the next
 # points: must be connected in order
 
-def map_gen(map_path, p0, p1):
+def map_gen(map_path, p0, p1, map_p0_idx=0, map_p1_idx=1):
     # have to provide the first and second transformed point in the map
 
     map = open(map_path, 'r')
@@ -25,22 +25,26 @@ def map_gen(map_path, p0, p1):
         counter += 1
     p0 = np.array(p0)
     p1 = np.array(p1)
+    map_p0 = np.array(map_pts[map_p0_idx])
+    map_p1 = np.array(map_pts[map_p1_idx])
     vec1 = p1 - p0
-    vec2 = np.array(map_pts[1]) - np.array(map_pts[0])
-    # print 'v1: ', vec1
-    # print 'v2: ', vec2
+    vec2 = map_p1 - map_p0
+    delta_p0 = p0 - map_p0
+    print 'v1: ', vec1
+    print 'v2: ', vec2
+    print 'p0: ', p0, ' map_p0: ', map_p0, ' p1: ', p1, ' map_p1: ', map_p1,' delta_p0: ', delta_p0
     
     l1 = np.linalg.norm(vec1)
     l2 = np.linalg.norm(vec2)
     dot = np.dot(vec1, vec2)
 
-    # print 'dot: ', dot/(l1*l2)
+    print 'dot: ', dot/(l1*l2)
     ang = np.arccos(dot/(l1*l2))
 
-    # print 'angle: ', ang
+    print 'angle: ', ang
 
     cross = np.cross(vec2, vec1)
-    # print 'cross: ', cross
+    print 'cross: ', cross
     if cross < 0:
         ang = 2*np.pi - ang
     elif cross > 0:
@@ -49,19 +53,24 @@ def map_gen(map_path, p0, p1):
         assert abs(ang) <= 0.0001
 
     map_pts = np.transpose(np.array(map_pts))
-    #print 'pts matrix: ', map_pts
+    print 'pts matrix: ', map_pts
+
+    # Translation:
+    for i in range(map_pts.shape[1]):
+        map_pts[0][i] = map_pts[0][i] - map_p0[0]
+        map_pts[1][i] = map_pts[1][i] - map_p0[1]
 
     # Scaling:
     scale = float(l1)/l2
-    # print 'scale: ', scale
+    print 'scale: ', scale
     S = [[scale,0],[0,scale]]
     mat_pts = np.matmul(S, map_pts)
-    # print 'Scaling: ', mat_pts
+    print 'Scaling: ', mat_pts
 
     # Rotation:
     R = np.array([[np.cos(ang), -np.sin(ang)],[np.sin(ang), np.cos(ang)]])
     map_pts = np.matmul(R, map_pts)
-    # print 'Rotation: ', map_pts
+    print 'Rotation: ', map_pts
 
     # Translation:
     for i in range(map_pts.shape[1]):
@@ -69,7 +78,7 @@ def map_gen(map_path, p0, p1):
         map_pts[1][i] = map_pts[1][i] + p0[1]
 
     map_pts = np.transpose(map_pts).tolist()
-    # print 'Translation: ', map_pts
+    print 'Translation: ', map_pts
 
     lines = []
     line_pts = []

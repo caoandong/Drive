@@ -19,7 +19,7 @@ class DummyClient(WebSocketClient):
 
 if __name__ == '__main__':
     try:
-        ws = DummyClient('ws://172.27.165.101:9090/', protocols=['http-only', 'chat'])
+        ws = DummyClient('ws://172.27.173.183:9090/', protocols=['http-only', 'chat'])
         ws.connect()
         ws.run_forever()
     except KeyboardInterrupt:

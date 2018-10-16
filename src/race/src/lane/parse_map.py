@@ -24,14 +24,17 @@ from networkx.utils import generate_unique_node
 import scipy as sp
 import scipy.interpolate
 
-map_path = '/home/antonio/catkin_ws/src/race/src/map/map_2.txt'
+map_path = '/home/antonio/catkin_ws/src/race/src/map/map_3.txt'
 lane_width = 0.6
 car_length = 0.34
 turning_radius = 0.45
 lane_probe = 0
 # Map parameters that determine the size and orientation of the map
-p0 = [3.75, 4.66]
-p1 = [1.26, 2.88]
+# p0 = [3.75, 4.66]
+# p1 = [1.26, 2.88]
+
+p0 = [3.50, 1.45]
+p1 = [3.62, 1.95]
 
 class Visualize (threading.Thread):
     def __init__(self):
@@ -611,7 +614,7 @@ def my_single_source_dijkstra(G, source, target=None, cutoff=None, weight='weigh
                 probe = LineString([tuple(v_pos), tuple(probe_end_pt)])
                 dot = np.dot(orient_tmp, w_orient)
                 print 'dot wv: ', dot
-                if dot <= -0.3:
+                if dot <= -0.35:
                     print 'orientation not right'
                     continue
 
@@ -817,7 +820,8 @@ if __name__ == '__main__':
         linewidth=3, solid_capstyle='round')
     probe_plot, = ax.plot([], [], color='r', alpha=0.5, fillstyle='full',
         linewidth=3, solid_capstyle='round')
-    line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1))
+    line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1), map_p0_idx=7, map_p1_idx=16)
+    # line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1))
     map_pts = get_map_pts(map_poly)
     visual_thread = Visualize()
     map_graph, map_edges = get_map_graph(map_pts, line_map, ax=ax)
