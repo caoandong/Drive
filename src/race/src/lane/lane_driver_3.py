@@ -108,8 +108,10 @@ D = 150
 #D = -100
 
 # Map parameters that determine the size and orientation of the map
-p0 = [3.75, 4.66]
-p1 = [1.26, 2.88]
+# p0 = [3.75, 4.66]
+# p1 = [1.26, 2.88]
+p0 = [3.50, 1.45]
+p1 = [3.62, 1.95]
 
 # Printing options
 print_main = 1
@@ -2425,8 +2427,8 @@ if __name__ == '__main__':
     rospy.Subscriber('web_socket/path', String, callback_web)    
 
     # Initialize the map
-    map_path = '/home/antonio/catkin_ws/src/race/src/map/map.txt'
-    line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1))
+    map_path = '/home/antonio/catkin_ws/src/race/src/map/map_3.txt'
+    line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1), map_p0_idx=7, map_p1_idx=16)
 
     target = [2.714665, 1.557787]
     map_pts = parse_map.get_map_pts(map_poly)
