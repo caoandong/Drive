@@ -41,8 +41,6 @@ def map_gen(map_path, p0, p1, map_p0_idx=0, map_p1_idx=1):
     print 'dot: ', dot/(l1*l2)
     ang = np.arccos(dot/(l1*l2))
 
-    print 'angle: ', ang
-
     cross = np.cross(vec2, vec1)
     print 'cross: ', cross
     if cross < 0:
@@ -64,12 +62,14 @@ def map_gen(map_path, p0, p1, map_p0_idx=0, map_p1_idx=1):
     scale = float(l1)/l2
     print 'scale: ', scale
     S = [[scale,0],[0,scale]]
-    mat_pts = np.matmul(S, map_pts)
-    print 'Scaling: ', mat_pts
+    map_pts = np.matmul(S, map_pts)
 
     # Rotation:
+    print 'angle: ', np.degrees(ang)
     R = np.array([[np.cos(ang), -np.sin(ang)],[np.sin(ang), np.cos(ang)]])
-    map_pts = np.matmul(R, map_pts)
+    print 'Rotation: ', R.tolist()
+    print 'Scaling: ', map_pts.tolist()
+    map_pts = np.matmul(R, np.array(map_pts))
     print 'Rotation: ', map_pts
 
     # Translation:

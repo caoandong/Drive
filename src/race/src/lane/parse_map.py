@@ -33,8 +33,8 @@ lane_probe = 0
 # p0 = [3.75, 4.66]
 # p1 = [1.26, 2.88]
 
-p0 = [3.50, 1.45]
-p1 = [3.62, 1.95]
+p0 = [2.41, 0.63]
+p1 = [6.59, 1.67]
 
 class Visualize (threading.Thread):
     def __init__(self):
@@ -820,7 +820,7 @@ if __name__ == '__main__':
         linewidth=3, solid_capstyle='round')
     probe_plot, = ax.plot([], [], color='r', alpha=0.5, fillstyle='full',
         linewidth=3, solid_capstyle='round')
-    line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1), map_p0_idx=7, map_p1_idx=16)
+    line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1), map_p0_idx=0, map_p1_idx=3)
     # line_map, line_map_plot, map_poly = map_gen.map_gen(map_path, np.array(p0), np.array(p1))
     map_pts = get_map_pts(map_poly)
     visual_thread = Visualize()

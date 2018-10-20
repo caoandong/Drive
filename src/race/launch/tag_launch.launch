@@ -1,10 +1,12 @@
 <?xml version="1.0"?>
 <launch>
 		<node pkg="race" type="tag_node.py" name="Decawave_tag_1" output="screen">
+			<!-- Tag 1 is DD24 -->
 			<param name="port" type="str" value="/dev/ttyACM1" />
 			<remap from="DecaWave_tag" to="/DecaWave_tag_1" />
 		</node>
 		<node pkg="race" type="tag_node.py" name="Decawave_tag_2" output="screen">
+			<!-- Tag 2 is 5383 -->
 			<param name="port" type="str" value="/dev/ttyACM3" />
 			<remap from="DecaWave_tag" to="/DecaWave_tag_2" />
 		</node>
