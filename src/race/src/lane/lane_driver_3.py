@@ -110,8 +110,8 @@ D = 150
 # Map parameters that determine the size and orientation of the map
 # p0 = [3.75, 4.66]
 # p1 = [1.26, 2.88]
-p0 = [3.50, 1.45]
-p1 = [3.62, 1.95]
+p0 = [2.41, 0.63]
+p1 = [6.59, 1.67]
 
 # Printing options
 print_main = 1
